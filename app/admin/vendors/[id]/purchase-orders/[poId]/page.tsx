@@ -1,0 +1,407 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { AdminLayout } from "@/components/admin/AdminLayout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { VendorService } from "@/lib/services/vendorService";
+import { ProductService } from "@/lib/services/productService";
+import { PurchaseOrder, Vendor, Warehouse } from "@/lib/types";
+import { useAuth } from "@/contexts/AuthContext";
+import { ArrowLeft, Package } from "lucide-react";
+import Link from "next/link";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+export default function PurchaseOrderDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const vendorId = params.id as string;
+  const poId = params.poId as string;
+  const { user } = useAuth();
+  const [purchaseOrder, setPurchaseOrder] = useState<PurchaseOrder | null>(null);
+  const [vendor, setVendor] = useState<Vendor | null>(null);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showGRNForm, setShowGRNForm] = useState(false);
+  const [grnData, setGrnData] = useState<
+    Record<string, { receivedQuantity: string; warehouseId: string }>
+  >({});
+
+  useEffect(() => {
+    if (poId) {
+      fetchPurchaseOrder();
+      fetchWarehouses();
+    }
+  }, [poId]);
+
+  const fetchPurchaseOrder = async () => {
+    try {
+      const poDoc = await getDoc(doc(db, "purchase_orders", poId));
+      if (poDoc.exists()) {
+        const po = { id: poDoc.id, ...poDoc.data() } as PurchaseOrder;
+        setPurchaseOrder(po);
+
+        // Fetch vendor
+        const vendorData = await VendorService.getVendor(po.vendorId);
+        setVendor(vendorData);
+
+        // Initialize GRN data
+        const initialGrnData: Record<string, { receivedQuantity: string; warehouseId: string }> = {};
+        po.items.forEach((item) => {
+          initialGrnData[item.productId] = {
+            receivedQuantity: item.quantity.toString(),
+            warehouseId: "",
+          };
+        });
+        setGrnData(initialGrnData);
+      }
+    } catch (error) {
+      console.error("Error fetching purchase order:", error);
+      setError("Failed to load purchase order");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchWarehouses = async () => {
+    try {
+      const { collection, getDocs } = await import("firebase/firestore");
+      const querySnapshot = await getDocs(collection(db, "warehouses"));
+      const warehouseList: Warehouse[] = [];
+      querySnapshot.forEach((doc) => {
+        warehouseList.push({ id: doc.id, ...doc.data() } as Warehouse);
+      });
+      setWarehouses(warehouseList);
+    } catch (error) {
+      console.error("Error fetching warehouses:", error);
+    }
+  };
+
+  const handleProcessGRN = async () => {
+    if (!user || !purchaseOrder) return;
+
+    // Validate GRN data
+    const receivedItems: Array<{
+      productId: string;
+      receivedQuantity: number;
+      warehouseId: string;
+    }> = [];
+
+    for (const [productId, data] of Object.entries(grnData)) {
+      const quantity = parseInt(data.receivedQuantity) || 0;
+      if (quantity > 0 && data.warehouseId) {
+        receivedItems.push({
+          productId,
+          receivedQuantity: quantity,
+          warehouseId: data.warehouseId,
+        });
+      }
+    }
+
+    if (receivedItems.length === 0) {
+      setError("Please specify received quantities and warehouses for at least one item");
+      return;
+    }
+
+    setError(null);
+    setProcessing(true);
+
+    try {
+      await VendorService.processGRN(poId, receivedItems, user.uid);
+      alert("GRN processed successfully! Inventory has been updated.");
+      router.push(`/admin/vendors/${vendorId}/purchase-orders`);
+    } catch (err: any) {
+      setError(err.message || "Failed to process GRN");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const getStatusColor = (status: PurchaseOrder["status"]) => {
+    switch (status) {
+      case "PENDING":
+        return "text-yellow-600 bg-yellow-50";
+      case "APPROVED":
+        return "text-blue-600 bg-blue-50";
+      case "RECEIVED":
+        return "text-green-600 bg-green-50";
+      case "CANCELLED":
+        return "text-red-600 bg-red-50";
+      default:
+        return "text-gray-600 bg-gray-50";
+    }
+  };
+
+  if (loading) {
+    return (
+      <ProtectedRoute requiredPermission={{ resource: "vendors", action: "view" }}>
+        <AdminLayout>
+          <div className="text-center py-12">Loading purchase order details...</div>
+        </AdminLayout>
+      </ProtectedRoute>
+    );
+  }
+
+  if (!purchaseOrder) {
+    return (
+      <ProtectedRoute requiredPermission={{ resource: "vendors", action: "view" }}>
+        <AdminLayout>
+          <div className="text-center py-12">
+            <h1 className="text-2xl font-bold mb-4">Purchase Order not found</h1>
+            <Link href={`/admin/vendors/${vendorId}/purchase-orders`}>
+              <Button>Back to Purchase Orders</Button>
+            </Link>
+          </div>
+        </AdminLayout>
+      </ProtectedRoute>
+    );
+  }
+
+  return (
+    <ProtectedRoute requiredPermission={{ resource: "vendors", action: "view" }}>
+      <AdminLayout>
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+            <Link href={`/admin/vendors/${vendorId}/purchase-orders`}>
+              <Button variant="outline" size="icon">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold">Purchase Order Details</h1>
+              <p className="text-gray-600 mt-1">
+                PO ID: {poId.slice(0, 8)}... | Vendor: {vendor?.companyName || "Unknown"}
+              </p>
+            </div>
+            {purchaseOrder.status !== "RECEIVED" && purchaseOrder.status !== "CANCELLED" && (
+              <Button onClick={() => setShowGRNForm(!showGRNForm)}>
+                <Package className="mr-2 h-4 w-4" />
+                {showGRNForm ? "Cancel GRN" : "Process GRN"}
+              </Button>
+            )}
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Order Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-gray-600">Status</p>
+                  <span
+                    className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(
+                      purchaseOrder.status
+                    )}`}
+                  >
+                    {purchaseOrder.status}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Created Date</p>
+                  <p className="font-medium">
+                    {purchaseOrder.createdAt.toDate().toLocaleDateString()}
+                  </p>
+                </div>
+                {purchaseOrder.receivedAt && (
+                  <div>
+                    <p className="text-sm text-gray-600">Received Date</p>
+                    <p className="font-medium">
+                      {purchaseOrder.receivedAt.toDate().toLocaleDateString()}
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Vendor Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-gray-600">Company Name</p>
+                  <p className="font-medium">{vendor?.companyName || "N/A"}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Contact Person</p>
+                  <p className="font-medium">{vendor?.contactPerson || "N/A"}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Phone</p>
+                  <p className="font-medium">{vendor?.phone || "N/A"}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Financial Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div>
+                  <p className="text-sm text-gray-600">Total Amount</p>
+                  <p className="text-2xl font-bold">Rs {purchaseOrder.totalAmount.toFixed(2)}</p>
+                </div>
+                <div className="mt-4">
+                  <p className="text-sm text-gray-600">Items Count</p>
+                  <p className="text-lg font-medium">{purchaseOrder.items.length} items</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Order Items</CardTitle>
+              <CardDescription>Products in this purchase order</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      <TableHead>Unit Price</TableHead>
+                      <TableHead>Total</TableHead>
+                      {purchaseOrder.status === "RECEIVED" && <TableHead>Received</TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {purchaseOrder.items.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell className="font-medium">{item.productName}</TableCell>
+                        <TableCell>{item.quantity}</TableCell>
+                        <TableCell>Rs {item.unitPrice.toFixed(2)}</TableCell>
+                        <TableCell className="font-medium">
+                          Rs {(item.quantity * item.unitPrice).toFixed(2)}
+                        </TableCell>
+                        {purchaseOrder.status === "RECEIVED" && (
+                          <TableCell>{item.receivedQuantity || item.quantity}</TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {showGRNForm && purchaseOrder.status !== "RECEIVED" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Process GRN (Goods Received Note)</CardTitle>
+                <CardDescription>
+                  Record received quantities and update inventory
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Product</TableHead>
+                        <TableHead>Ordered Qty</TableHead>
+                        <TableHead>Received Qty</TableHead>
+                        <TableHead>Warehouse</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {purchaseOrder.items.map((item) => (
+                        <TableRow key={item.productId}>
+                          <TableCell className="font-medium">{item.productName}</TableCell>
+                          <TableCell>{item.quantity}</TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min="0"
+                              max={item.quantity}
+                              value={grnData[item.productId]?.receivedQuantity || ""}
+                              onChange={(e) =>
+                                setGrnData({
+                                  ...grnData,
+                                  [item.productId]: {
+                                    ...grnData[item.productId],
+                                    receivedQuantity: e.target.value,
+                                    warehouseId: grnData[item.productId]?.warehouseId || "",
+                                  },
+                                })
+                              }
+                              className="w-24"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={grnData[item.productId]?.warehouseId || ""}
+                              onValueChange={(value) =>
+                                setGrnData({
+                                  ...grnData,
+                                  [item.productId]: {
+                                    ...grnData[item.productId],
+                                    receivedQuantity: grnData[item.productId]?.receivedQuantity || "",
+                                    warehouseId: value,
+                                  },
+                                })
+                              }
+                            >
+                              <SelectTrigger className="w-[200px]">
+                                <SelectValue placeholder="Select warehouse" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {warehouses.map((warehouse) => (
+                                  <SelectItem key={warehouse.id} value={warehouse.id}>
+                                    {warehouse.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex gap-4 pt-4">
+                  <Button onClick={handleProcessGRN} disabled={processing}>
+                    {processing ? "Processing..." : "Process GRN"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowGRNForm(false)}
+                    disabled={processing}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </AdminLayout>
+    </ProtectedRoute>
+  );
+}
+
