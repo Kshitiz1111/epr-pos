@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Edit, Save, X } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -17,51 +18,96 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CreditService } from "@/lib/services/creditService";
-import { Customer, CreditTransaction, Sale } from "@/lib/types";
+import { OrderService } from "@/lib/services/orderService";
+import { Customer, CreditTransaction, Sale, Order, PaymentMethod } from "@/lib/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/lib/hooks/usePermissions";
-import { doc, getDoc, collection, query, where, getDocs, orderBy, updateDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs, orderBy, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ArrowLeft, DollarSign } from "lucide-react";
+import { ArrowLeft, DollarSign, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 
 export default function CustomerDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const customerId = params.id as string;
   const { user } = useAuth();
   const { hasPermission } = usePermissions();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [credits, setCredits] = useState<CreditTransaction[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingCredits, setLoadingCredits] = useState(true);
+  const [loadingOrders, setLoadingOrders] = useState(true);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [salesWarning, setSalesWarning] = useState<string | null>(null);
   const [creditsError, setCreditsError] = useState<string | null>(null);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [selectedCredit, setSelectedCredit] = useState<CreditTransaction | null>(null);
   const [settlementAmount, setSettlementAmount] = useState("");
   const [settlementNotes, setSettlementNotes] = useState("");
+  const [settlementPaymentMethod, setSettlementPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    address: "",
+  });
 
   useEffect(() => {
     if (customerId) {
       fetchCustomerData();
       fetchCredits();
       fetchSales();
+      fetchOrders();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
   const fetchCustomerData = async () => {
     try {
       const customerDoc = await getDoc(doc(db, "customers", customerId));
       if (customerDoc.exists()) {
-        setCustomer({ id: customerDoc.id, ...customerDoc.data() } as Customer);
+        const customerData = { id: customerDoc.id, ...customerDoc.data() } as Customer;
+        setCustomer(customerData);
+        setFormData({
+          name: customerData.name,
+          phone: customerData.phone,
+          email: customerData.email || "",
+          address: customerData.address || "",
+        });
       }
     } catch (error) {
       console.error("Error fetching customer:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!customer) return;
+
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "customers", customerId), {
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email || undefined,
+        address: formData.address || undefined,
+        updatedAt: serverTimestamp(),
+      });
+      setEditing(false);
+      await fetchCustomerData();
+      alert("Customer updated successfully");
+    } catch (error) {
+      console.error("Error updating customer:", error);
+      alert("Failed to update customer");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -72,13 +118,13 @@ export default function CustomerDetailPage() {
       const customerCredits = await CreditService.getCustomerCredits(customerId);
       setCredits(customerCredits);
       console.log(`Fetched ${customerCredits.length} credit transactions for customer ${customerId}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error fetching credits:", error);
-      const errorMessage = error.message || "Failed to load credit history";
+      const errorMessage = error instanceof Error ? error.message : "Failed to load credit history";
       setCreditsError(errorMessage);
       
       // Check if it's a missing index error
-      if (error.code === "failed-precondition" || error.message?.includes("index")) {
+      if (error instanceof Error && (error.message?.includes("index") || (error as { code?: string }).code === "failed-precondition")) {
         setCreditsError(
           "Credit history query requires a Firestore index. Please create a composite index on (customerId, createdAt) for the credit_transactions collection."
         );
@@ -108,9 +154,10 @@ export default function CustomerDetailPage() {
         });
         setSales(salesList);
         console.log(`Fetched ${salesList.length} sales for customer ${customerId}`);
-      } catch (indexError: any) {
+      } catch (indexError: unknown) {
         // If index is missing, try without orderBy and sort in memory
-        if (indexError.code === "failed-precondition" || indexError.message?.includes("index")) {
+        const error = indexError as { code?: string; message?: string };
+        if (error.code === "failed-precondition" || error.message?.includes("index")) {
           console.warn("Composite index missing, fetching without orderBy and sorting in memory");
           q = query(
             collection(db, "sales"),
@@ -139,12 +186,26 @@ export default function CustomerDetailPage() {
           throw indexError;
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error fetching sales:", error);
-      const errorMessage = error.message || "Failed to load purchase history";
+      const errorMessage = error instanceof Error ? error.message : "Failed to load purchase history";
       setSalesError(errorMessage);
     } finally {
       setLoadingSales(false);
+    }
+  };
+
+  const fetchOrders = async () => {
+    setLoadingOrders(true);
+    setOrdersError(null);
+    try {
+      const customerOrders = await OrderService.getCustomerOrders(customerId);
+      setOrders(customerOrders);
+    } catch (error: unknown) {
+      console.error("Error fetching orders:", error);
+      setOrdersError(error instanceof Error ? error.message : "Failed to load online orders");
+    } finally {
+      setLoadingOrders(false);
     }
   };
 
@@ -197,6 +258,7 @@ export default function CustomerDetailPage() {
         selectedCredit.id,
         amount,
         user.uid,
+        settlementPaymentMethod,
         settlementNotes || undefined
       );
       setSelectedCredit(null);
@@ -205,8 +267,8 @@ export default function CustomerDetailPage() {
       fetchCredits();
       fetchCustomerData();
       alert("Credit settled successfully");
-    } catch (error: any) {
-      alert(error.message || "Failed to settle credit");
+    } catch (error: unknown) {
+      alert(error instanceof Error ? error.message : "Failed to settle credit");
     }
   };
 
@@ -242,16 +304,46 @@ export default function CustomerDetailPage() {
     <ProtectedRoute requiredPermission={{ resource: "customers", action: "view" }}>
       <AdminLayout>
         <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <Link href="/admin/customers">
-              <Button variant="outline" size="icon">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
-            <div className="flex-1">
-              <h1 className="text-3xl font-bold">{customer.name}</h1>
-              <p className="text-gray-600 mt-1">Customer Details</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link href="/admin/customers">
+                <Button variant="outline" size="icon">
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+              </Link>
+              <div className="flex-1">
+                <h1 className="text-3xl font-bold">{customer.name}</h1>
+                <p className="text-gray-600 mt-1">Customer Details</p>
+              </div>
             </div>
+            {hasPermission("customers", "update") && (
+              <>
+                {!editing ? (
+                  <Button onClick={() => setEditing(true)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </Button>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button onClick={handleSave} disabled={saving}>
+                      <Save className="mr-2 h-4 w-4" />
+                      {saving ? "Saving..." : "Save"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setEditing(false);
+                        fetchCustomerData();
+                      }}
+                      disabled={saving}
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -260,21 +352,67 @@ export default function CustomerDetailPage() {
                 <CardTitle>Contact Information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-gray-600">Phone</p>
-                  <p className="font-medium">{customer.phone}</p>
-                </div>
-                {customer.email && (
-                  <div>
-                    <p className="text-sm text-gray-600">Email</p>
-                    <p className="font-medium">{customer.email}</p>
-                  </div>
-                )}
-                {customer.address && (
-                  <div>
-                    <p className="text-sm text-gray-600">Address</p>
-                    <p className="font-medium">{customer.address}</p>
-                  </div>
+                {editing ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Name</Label>
+                      <Input
+                        id="name"
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Phone</Label>
+                      <Input
+                        id="phone"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email (Optional)</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="address">Address (Optional)</Label>
+                      <Input
+                        id="address"
+                        value={formData.address}
+                        onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-sm text-gray-600">Name</p>
+                      <p className="font-medium">{customer.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Phone</p>
+                      <p className="font-medium">{customer.phone}</p>
+                    </div>
+                    {customer.email && (
+                      <div>
+                        <p className="text-sm text-gray-600">Email</p>
+                        <p className="font-medium">{customer.email}</p>
+                      </div>
+                    )}
+                    {customer.address && (
+                      <div>
+                        <p className="text-sm text-gray-600">Address</p>
+                        <p className="font-medium">{customer.address}</p>
+                      </div>
+                    )}
+                  </>
                 )}
                 <div>
                   <p className="text-sm text-gray-600">Member Since</p>
@@ -422,6 +560,24 @@ export default function CustomerDetailPage() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label htmlFor="paymentMethod">Payment Method *</Label>
+                  <Select
+                    value={settlementPaymentMethod}
+                    onValueChange={(value) => setSettlementPaymentMethod(value as PaymentMethod)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CASH">Cash</SelectItem>
+                      <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                      <SelectItem value="FONE_PAY">FonePay</SelectItem>
+                      <SelectItem value="CHEQUE">Cheque</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="notes">Notes (Optional)</Label>
                   <Input
                     id="notes"
@@ -440,6 +596,7 @@ export default function CustomerDetailPage() {
                       setSelectedCredit(null);
                       setSettlementAmount("");
                       setSettlementNotes("");
+                      setSettlementPaymentMethod("CASH");
                     }}
                   >
                     Cancel
@@ -517,6 +674,90 @@ export default function CustomerDetailPage() {
                 </div>
               )}
                 </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingBag className="h-5 w-5" />
+                Online Orders
+              </CardTitle>
+              <CardDescription>Orders placed from the online store</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingOrders ? (
+                <div className="text-center py-8">Loading online orders...</div>
+              ) : ordersError ? (
+                <div className="text-center py-8">
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+                    <p className="font-semibold">Error loading online orders</p>
+                    <p className="text-sm mt-1">{ordersError}</p>
+                  </div>
+                  <Button variant="outline" onClick={fetchOrders}>
+                    Retry
+                  </Button>
+                </div>
+              ) : orders.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No online orders found.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Order Number</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Items</TableHead>
+                        <TableHead>Total</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Payment</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orders.map((order) => (
+                        <TableRow key={order.id}>
+                          <TableCell className="font-mono text-sm font-medium">
+                            {order.orderNumber}
+                          </TableCell>
+                          <TableCell>
+                            {order.createdAt.toDate().toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>{order.items.length} item(s)</TableCell>
+                          <TableCell className="font-medium">
+                            Rs {order.total.toFixed(2)}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                order.status === "PENDING"
+                                  ? "bg-yellow-100 text-yellow-800"
+                                  : order.status === "CONFIRMED"
+                                  ? "bg-green-100 text-green-800"
+                                  : order.status === "SHIPPED"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : "bg-red-100 text-red-800"
+                              }`}
+                            >
+                              {order.status}
+                            </span>
+                          </TableCell>
+                          <TableCell>{order.paymentMethod}</TableCell>
+                          <TableCell className="text-right">
+                            <Link href={`/admin/orders/${order.orderNumber}`}>
+                              <Button variant="ghost" size="sm">
+                                View
+                              </Button>
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>

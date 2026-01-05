@@ -30,6 +30,7 @@ export default function CreateProductPage() {
     category: "",
     price: "",
     costPrice: "",
+    discount: "",
   });
 
   const [warehouseData, setWarehouseData] = useState<Record<string, { quantity: string; position: string; minQuantity: string }>>({});
@@ -98,6 +99,7 @@ export default function CreateProductPage() {
           category: formData.category,
           price: parseFloat(formData.price),
           costPrice: formData.costPrice ? parseFloat(formData.costPrice) : undefined,
+          discount: formData.discount ? parseFloat(formData.discount) : undefined,
           warehouses: warehousesObj,
           attributes: {},
           isActive: true,
@@ -200,6 +202,20 @@ export default function CreateProductPage() {
                     step="0.01"
                     value={formData.costPrice}
                     onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="discount">Discount (%)</Label>
+                  <Input
+                    id="discount"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={formData.discount}
+                    onChange={(e) => setFormData({ ...formData, discount: e.target.value })}
                     placeholder="0.00"
                   />
                 </div>

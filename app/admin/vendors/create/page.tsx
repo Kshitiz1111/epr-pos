@@ -21,6 +21,7 @@ export default function CreateVendorPage() {
     phone: "",
     email: "",
     address: "",
+    category: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -120,6 +121,17 @@ export default function CreateVendorPage() {
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   placeholder="Vendor address"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="category">Category (Optional)</Label>
+                <Input
+                  id="category"
+                  type="text"
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  placeholder="e.g., Electronics, Furniture, etc."
                 />
               </div>
             </CardContent>

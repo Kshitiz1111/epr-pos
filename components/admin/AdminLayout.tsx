@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/lib/hooks/usePermissions";
+import { EmployeePermissions } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard,
@@ -20,7 +20,10 @@ import {
   X,
   LogOut,
   User as UserIcon,
+  ShoppingBag,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { OrderService } from "@/lib/services/orderService";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -71,7 +74,7 @@ const navItems: NavItem[] = [
   },
   {
     title: "Finance",
-    href: "/admin/finance/ledger",
+    href: "/admin/finance",
     icon: DollarSign,
     permission: { resource: "finance", action: "view" },
   },
@@ -88,10 +91,16 @@ const navItems: NavItem[] = [
     permission: { resource: "customers", action: "viewCredits" },
   },
   {
+    title: "Orders",
+    href: "/admin/orders",
+    icon: ShoppingBag,
+    permission: { resource: "orders", action: "view" },
+  },
+  {
     title: "Settings",
     href: "/admin/settings/printers",
     icon: Settings,
-    permission: { resource: "pos", action: "update" },
+    permission: { resource: "settings", action: "view" },
   },
 ];
 
@@ -99,12 +108,32 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, signOut } = useAuth();
-  const { hasPermission, isAdmin } = usePermissions();
+  const { hasPermission } = usePermissions();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
+
+  useEffect(() => {
+    // Fetch pending orders count
+    const fetchPendingCount = async () => {
+      try {
+        const count = await OrderService.getPendingOrdersCount();
+        setPendingOrdersCount(count);
+      } catch (error) {
+        console.error("Error fetching pending orders count:", error);
+      }
+    };
+
+    fetchPendingCount();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchPendingCount, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const filteredNavItems = navItems.filter((item) => {
     if (!item.permission) return true;
-    return hasPermission(item.permission.resource as any, item.permission.action as any);
+    const resource = item.permission.resource as keyof EmployeePermissions["resources"];
+    const action = item.permission.action as "view" | "create" | "update" | "delete" | "viewCredits" | "settleCredits";
+    return hasPermission(resource, action);
   });
 
   const handleSignOut = async () => {
@@ -148,13 +177,14 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
               {filteredNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                const showBadge = item.href === "/admin/orders" && pendingOrdersCount > 0;
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     onClick={() => setSidebarOpen(false)}
                     className={cn(
-                      "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                      "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors relative",
                       isActive
                         ? "bg-blue-50 text-blue-700 font-medium"
                         : "text-gray-700 hover:bg-gray-100"
@@ -162,6 +192,11 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                   >
                     <Icon className="h-5 w-5" />
                     <span>{item.title}</span>
+                    {showBadge && (
+                      <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+                        {pendingOrdersCount > 99 ? "99+" : pendingOrdersCount}
+                      </span>
+                    )}
                   </Link>
                 );
               })}

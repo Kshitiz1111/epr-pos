@@ -16,7 +16,7 @@ import {
 import { HRService } from "@/lib/services/hrService";
 import { AttendanceRecord } from "@/lib/types";
 import { useAuth } from "@/contexts/AuthContext";
-import { ClockIn, ClockOut } from "lucide-react";
+import { Clock } from "lucide-react";
 
 export default function AttendancePage() {
   const { user } = useAuth();
@@ -128,14 +128,14 @@ export default function AttendancePage() {
                 )}
                 {!todayAttendance.checkOut && (
                   <Button onClick={handleCheckOut} disabled={processing} className="w-full">
-                    <ClockOut className="mr-2 h-4 w-4" />
+                    <Clock className="mr-2 h-4 w-4" />
                     Check Out
                   </Button>
                 )}
               </div>
             ) : (
               <Button onClick={handleCheckIn} disabled={processing} className="w-full">
-                <ClockIn className="mr-2 h-4 w-4" />
+                <Clock className="mr-2 h-4 w-4" />
                 Check In
               </Button>
             )}

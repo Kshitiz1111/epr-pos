@@ -12,8 +12,9 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Vendor, PurchaseOrder, PurchaseOrderItem } from "@/lib/types";
+import { Vendor, PurchaseOrder, PurchaseOrderItem, PaymentMethod } from "@/lib/types";
 import { ProductService } from "./productService";
+import { LedgerService } from "./ledgerService";
 
 export class VendorService {
   /**
@@ -121,7 +122,8 @@ export class VendorService {
   static async processGRN(
     poId: string,
     receivedItems: Array<{ productId: string; receivedQuantity: number; warehouseId: string }>,
-    receivedBy: string
+    receivedBy: string,
+    billImageUrl?: string
   ): Promise<void> {
     try {
       const poDoc = await getDoc(doc(db, "purchase_orders", poId));
@@ -132,7 +134,7 @@ export class VendorService {
       const po = { id: poDoc.id, ...poDoc.data() } as PurchaseOrder;
 
       // Update purchase order status
-      await updateDoc(doc(db, "purchase_orders", poId), {
+      const updateData: any = {
         status: "RECEIVED",
         receivedAt: Timestamp.now(),
         receivedBy,
@@ -143,7 +145,11 @@ export class VendorService {
             receivedQuantity: received?.receivedQuantity || 0,
           };
         }),
-      });
+      };
+      if (billImageUrl) {
+        updateData.billImageUrl = billImageUrl;
+      }
+      await updateDoc(doc(db, "purchase_orders", poId), updateData);
 
       // Update inventory for each received item
       for (const receivedItem of receivedItems) {
@@ -189,6 +195,123 @@ export class VendorService {
       return orders;
     } catch (error) {
       console.error("Error fetching purchase orders:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Settle vendor payment
+   */
+  static async settleVendorPayment(
+    vendorId: string,
+    amount: number,
+    paymentMethod: PaymentMethod,
+    performedBy: string,
+    notes?: string,
+    imageUrl?: string
+  ): Promise<void> {
+    try {
+      const vendor = await this.getVendor(vendorId);
+      if (!vendor) {
+        throw new Error("Vendor not found");
+      }
+
+      if (amount > vendor.balance) {
+        throw new Error("Payment amount cannot exceed outstanding balance");
+      }
+
+      // Update vendor balance
+      const newBalance = vendor.balance - amount;
+      await this.updateVendor(vendorId, {
+        balance: newBalance,
+      });
+
+      // Create payment record in subcollection
+      await addDoc(collection(db, "vendors", vendorId, "payments"), {
+        amount,
+        paymentMethod,
+        notes: notes || undefined,
+        imageUrl: imageUrl || undefined,
+        performedBy,
+        createdAt: Timestamp.now(),
+      });
+
+      // Create ledger entry
+      await LedgerService.createExpense(
+        "VENDOR_PAY",
+        amount,
+        `Payment to ${vendor.companyName}${notes ? ` - ${notes}` : ""}`,
+        paymentMethod,
+        performedBy
+      );
+    } catch (error) {
+      console.error("Error settling vendor payment:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get vendor payment history
+   */
+  static async getVendorPaymentHistory(vendorId: string): Promise<Array<{
+    id: string;
+    amount: number;
+    paymentMethod: PaymentMethod;
+    notes?: string;
+    imageUrl?: string;
+    performedBy: string;
+    createdAt: Timestamp;
+  }>> {
+    try {
+      const paymentsQuery = query(
+        collection(db, "vendors", vendorId, "payments"),
+        orderBy("createdAt", "desc")
+      );
+      const querySnapshot = await getDocs(paymentsQuery);
+      const payments: Array<{
+        id: string;
+        amount: number;
+        paymentMethod: PaymentMethod;
+        notes?: string;
+        imageUrl?: string;
+        performedBy: string;
+        createdAt: Timestamp;
+      }> = [];
+      querySnapshot.forEach((doc) => {
+        payments.push({ id: doc.id, ...doc.data() } as any);
+      });
+      return payments;
+    } catch (error: unknown) {
+      // If index is missing, fetch without orderBy and sort in memory
+      const err = error as { code?: string; message?: string };
+      if (err.code === "failed-precondition" || err.message?.includes("index")) {
+        try {
+          const paymentsQuery = query(collection(db, "vendors", vendorId, "payments"));
+          const querySnapshot = await getDocs(paymentsQuery);
+          const payments: Array<{
+            id: string;
+            amount: number;
+            paymentMethod: PaymentMethod;
+            notes?: string;
+            imageUrl?: string;
+            performedBy: string;
+            createdAt: Timestamp;
+          }> = [];
+          querySnapshot.forEach((doc) => {
+            payments.push({ id: doc.id, ...doc.data() } as any);
+          });
+          payments.sort((a, b) => {
+            const aTime = a.createdAt?.toMillis() || 0;
+            const bTime = b.createdAt?.toMillis() || 0;
+            return bTime - aTime;
+          });
+          return payments;
+        } catch (fallbackError) {
+          console.error("Error fetching vendor payment history (fallback):", fallbackError);
+          throw fallbackError;
+        }
+      }
+      console.error("Error fetching vendor payment history:", error);
       throw error;
     }
   }

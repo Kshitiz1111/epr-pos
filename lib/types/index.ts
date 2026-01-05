@@ -23,6 +23,8 @@ export type EmployeePermissions = {
     vendors: ResourcePermission;
     pos: ResourcePermission;
     reports: ResourcePermission;
+    orders: ResourcePermission;
+    settings: ResourcePermission;
   };
 };
 
@@ -59,6 +61,7 @@ export type Product = {
   category: string;
   price: number;
   costPrice?: number; // For profit calculation
+  discount?: number; // Discount percentage or amount
   imageUrl?: string;
   warehouses: {
     [warehouseId: string]: ProductWarehouse;
@@ -117,6 +120,7 @@ export type CreditTransaction = {
     amount: number;
     date: Timestamp;
     settledBy: string;
+    paymentMethod: PaymentMethod;
     notes?: string;
   }>;
 };
@@ -132,7 +136,7 @@ export type SaleItem = {
   subtotal: number;
 };
 
-export type PaymentMethod = "CASH" | "BANK_TRANSFER" | "FONE_PAY" | "CREDIT";
+export type PaymentMethod = "CASH" | "BANK_TRANSFER" | "FONE_PAY" | "CREDIT" | "CHEQUE";
 
 export type Sale = {
   id: string;
@@ -208,6 +212,7 @@ export type Vendor = {
   phone: string;
   email?: string;
   address?: string;
+  category?: string; // Vendor category (e.g., "Electronics", "Furniture", etc.)
   balance: number; // How much we owe them (Accounts Payable)
   isActive: boolean;
   createdAt: Timestamp;
@@ -234,6 +239,46 @@ export type PurchaseOrder = {
   createdAt: Timestamp;
   receivedAt?: Timestamp;
   receivedBy?: string;
+  billImageUrl?: string;
+};
+
+// Order Types
+export type OrderStatus = "PENDING" | "CONFIRMED" | "SHIPPED" | "CANCELLED" | "COMPLETED";
+
+export type OrderItem = {
+  productId: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  imageUrl?: string;
+};
+
+export type Order = {
+  id: string;
+  orderNumber: string; // Unique order number for tracking
+  customerId?: string; // null if guest order
+  customerInfo: {
+    name: string;
+    phone: string;
+    email?: string;
+    address: string;
+  };
+  items: OrderItem[];
+  subtotal: number;
+  discount: number; // Loyalty discount
+  total: number;
+  paymentMethod: "COD" | "BANK_TRANSFER" | "FONE_PAY";
+  status: OrderStatus;
+  loyaltyPointsUsed?: number; // Points redeemed for this order
+  loyaltyPointsEarned?: number; // Points earned from this order
+  notes?: string; // Admin notes
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  confirmedAt?: Timestamp;
+  shippedAt?: Timestamp;
+  cancelledAt?: Timestamp;
 };
 
 // Loyalty Types

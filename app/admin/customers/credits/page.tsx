@@ -16,7 +16,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CreditService } from "@/lib/services/creditService";
-import { CreditTransaction, Customer } from "@/lib/types";
+import { CreditTransaction, Customer, PaymentMethod } from "@/lib/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { collection, getDocs, doc, getDoc } from "firebase/firestore";
@@ -32,6 +33,7 @@ export default function CustomerCreditsPage() {
   const [selectedCredit, setSelectedCredit] = useState<CreditTransaction | null>(null);
   const [settlementAmount, setSettlementAmount] = useState("");
   const [settlementNotes, setSettlementNotes] = useState("");
+  const [settlementPaymentMethod, setSettlementPaymentMethod] = useState<PaymentMethod>("CASH");
 
   useEffect(() => {
     fetchCredits();
@@ -82,6 +84,7 @@ export default function CustomerCreditsPage() {
         selectedCredit.id,
         amount,
         user.uid,
+        settlementPaymentMethod,
         settlementNotes || undefined
       );
       setSelectedCredit(null);
@@ -212,6 +215,24 @@ export default function CustomerCreditsPage() {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="paymentMethod">Payment Method *</Label>
+                <Select
+                  value={settlementPaymentMethod}
+                  onValueChange={(value) => setSettlementPaymentMethod(value as PaymentMethod)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                    <SelectItem value="FONE_PAY">FonePay</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="notes">Notes (Optional)</Label>
                 <Input
                   id="notes"
@@ -230,6 +251,7 @@ export default function CustomerCreditsPage() {
                     setSelectedCredit(null);
                     setSettlementAmount("");
                     setSettlementNotes("");
+                    setSettlementPaymentMethod("CASH");
                   }}
                 >
                   Cancel

@@ -10,11 +10,14 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProductService } from "@/lib/services/productService";
 import { ImageService } from "@/lib/services/imageService";
+import { PrinterService, ESCPOSCommands } from "@/lib/services/printerService";
 import { Product, Warehouse } from "@/lib/types";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ArrowLeft, Edit, Trash2, Save, X, QrCode } from "lucide-react";
+import { ArrowLeft, Edit, Trash2, Save, X, QrCode, Download, Printer } from "lucide-react";
+import QRCode from "react-qr-code";
+import { parseQRData } from "@/lib/utils/qrCode";
 import Link from "next/link";
 
 export default function ProductDetailPage() {
@@ -30,6 +33,7 @@ export default function ProductDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -38,6 +42,7 @@ export default function ProductDetailPage() {
     category: "",
     price: "",
     costPrice: "",
+    discount: "",
   });
 
   const [warehouseData, setWarehouseData] = useState<
@@ -63,6 +68,7 @@ export default function ProductDetailPage() {
           category: productData.category,
           price: productData.price.toString(),
           costPrice: productData.costPrice?.toString() || "",
+          discount: productData.discount?.toString() || "",
         });
 
         // Initialize warehouse data
@@ -144,6 +150,7 @@ export default function ProductDetailPage() {
         category: formData.category,
         price: parseFloat(formData.price),
         costPrice: formData.costPrice ? parseFloat(formData.costPrice) : undefined,
+        discount: formData.discount ? parseFloat(formData.discount) : undefined,
         imageUrl,
       });
 
@@ -320,7 +327,7 @@ export default function ProductDetailPage() {
                         required
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="price">Selling Price (Rs)</Label>
                         <Input
@@ -340,6 +347,18 @@ export default function ProductDetailPage() {
                           step="0.01"
                           value={formData.costPrice}
                           onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="discount">Discount (%)</Label>
+                        <Input
+                          id="discount"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={formData.discount}
+                          onChange={(e) => setFormData({ ...formData, discount: e.target.value })}
                         />
                       </div>
                     </div>
@@ -372,7 +391,17 @@ export default function ProductDetailPage() {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-sm text-gray-600">Selling Price</p>
-                        <p className="text-lg font-bold">Rs {product.price.toFixed(2)}</p>
+                        {product.discount && product.discount > 0 ? (
+                          <div>
+                            <p className="text-sm text-gray-400 line-through">Rs {product.price.toFixed(2)}</p>
+                            <p className="text-lg font-bold text-green-600">
+                              Rs {(product.price * (1 - product.discount / 100)).toFixed(2)}
+                            </p>
+                            <p className="text-xs text-red-600 font-semibold">-{product.discount.toFixed(0)}% OFF</p>
+                          </div>
+                        ) : (
+                          <p className="text-lg font-bold">Rs {product.price.toFixed(2)}</p>
+                        )}
                       </div>
                       {product.costPrice && (
                         <div>
@@ -497,12 +526,131 @@ export default function ProductDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-4">
-                  <div className="p-4 bg-white rounded border">
-                    <img src={product.trackTrace.qrCodeUrl} alt="QR Code" className="w-32 h-32" />
+                  <div className="p-4 bg-white rounded border" id="qr-code-container">
+                    {(() => {
+                      try {
+                        // qrCodeUrl is a JSON string, parse it to get the data
+                        const qrData = parseQRData(product.trackTrace.qrCodeUrl);
+                        if (qrData) {
+                          return (
+                            <QRCode
+                              value={product.trackTrace.qrCodeUrl}
+                              size={128}
+                              level="M"
+                            />
+                          );
+                        }
+                        // Fallback: if parsing fails, try to render directly
+                        return (
+                          <div data-qr-code={product.id}>
+                            <QRCode
+                              value={product.trackTrace.qrCodeUrl}
+                              size={128}
+                              level="M"
+                            />
+                          </div>
+                        );
+                      } catch (error) {
+                        console.error("Error rendering QR code:", error);
+                        return (
+                          <div className="w-32 h-32 flex items-center justify-center text-red-500 text-xs">
+                            Error rendering QR code
+                          </div>
+                        );
+                      }
+                    })()}
                   </div>
                   <div>
                     <p className="text-sm text-gray-600 mb-2">Product ID: {product.id}</p>
-                    <p className="text-sm text-gray-600">SKU: {product.sku}</p>
+                    <p className="text-sm text-gray-600 mb-4">SKU: {product.sku}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          // Download QR code as SVG
+                          const container = document.getElementById("qr-code-container");
+                          if (container) {
+                            const svg = container.querySelector("svg");
+                            if (svg) {
+                              const svgData = new XMLSerializer().serializeToString(svg);
+                              const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+                              const url = URL.createObjectURL(blob);
+                              const link = document.createElement("a");
+                              link.href = url;
+                              link.download = `qr-code-${product.sku}.svg`;
+                              link.click();
+                              URL.revokeObjectURL(url);
+                            }
+                          }
+                        }}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Download
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={printing}
+                        onClick={async () => {
+                          setPrinting(true);
+                          try {
+                            // Get printer settings
+                            const settings = await PrinterService.getSettings();
+                            if (!settings || !settings.type) {
+                              alert("Please configure a printer in Settings first");
+                              return;
+                            }
+
+                            // Create print content with QR code
+                            const container = document.getElementById("qr-code-container");
+                            if (container) {
+                              const svg = container.querySelector("svg");
+                              if (svg) {
+                                // Convert SVG to image for printing
+                                const svgData = new XMLSerializer().serializeToString(svg);
+                                const img = new Image();
+                                img.onload = async () => {
+                                  try {
+                                    // Connect to printer
+                                    await PrinterService.connect(settings.type);
+                                    
+                                    // Print QR code label
+                                    const printContent = `
+${ESCPOSCommands.center()}
+${ESCPOSCommands.bold(true)}
+Product: ${product.name}
+SKU: ${product.sku}
+${ESCPOSCommands.bold(false)}
+${ESCPOSCommands.lineFeed(1)}
+[QR Code Image]
+${ESCPOSCommands.lineFeed(2)}
+${ESCPOSCommands.cut()}
+`;
+                                    await PrinterService.printText(printContent);
+                                    alert("QR code printed successfully");
+                                  } catch (error) {
+                                    console.error("Error printing:", error);
+                                    alert(error instanceof Error ? error.message : "Failed to print QR code");
+                                  } finally {
+                                    await PrinterService.disconnect();
+                                  }
+                                };
+                                img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+                              }
+                            }
+                          } catch (error) {
+                            console.error("Error printing QR code:", error);
+                            alert(error instanceof Error ? error.message : "Failed to print QR code");
+                          } finally {
+                            setPrinting(false);
+                          }
+                        }}
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        {printing ? "Printing..." : "Print"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </CardContent>

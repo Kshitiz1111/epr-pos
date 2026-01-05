@@ -203,6 +203,7 @@ export default function LedgerPage() {
                       <SelectItem value="CASH">Cash</SelectItem>
                       <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
                       <SelectItem value="FONE_PAY">FonePay</SelectItem>
+                      <SelectItem value="CHEQUE">Cheque</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

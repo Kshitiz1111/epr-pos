@@ -17,10 +17,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { VendorService } from "@/lib/services/vendorService";
+import { ImageService } from "@/lib/services/imageService";
 import { ProductService } from "@/lib/services/productService";
 import { PurchaseOrder, Vendor, Warehouse } from "@/lib/types";
 import { useAuth } from "@/contexts/AuthContext";
-import { ArrowLeft, Package } from "lucide-react";
+import { ArrowLeft, Package, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -42,6 +43,9 @@ export default function PurchaseOrderDetailPage() {
   const [grnData, setGrnData] = useState<
     Record<string, { receivedQuantity: string; warehouseId: string }>
   >({});
+  const [billImageFile, setBillImageFile] = useState<File | null>(null);
+  const [billImagePreview, setBillImagePreview] = useState<string | null>(null);
+  const [uploadingBill, setUploadingBill] = useState(false);
 
   useEffect(() => {
     if (poId) {
@@ -93,6 +97,18 @@ export default function PurchaseOrderDetailPage() {
     }
   };
 
+  const handleBillImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setBillImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setBillImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleProcessGRN = async () => {
     if (!user || !purchaseOrder) return;
 
@@ -121,15 +137,34 @@ export default function PurchaseOrderDetailPage() {
 
     setError(null);
     setProcessing(true);
+    setUploadingBill(true);
 
     try {
-      await VendorService.processGRN(poId, receivedItems, user.uid);
+      let billImageUrl: string | undefined;
+      if (billImageFile) {
+        try {
+          billImageUrl = await ImageService.uploadImage(
+            billImageFile,
+            `purchase-orders/${poId}`
+          );
+        } catch (uploadError) {
+          console.error("Error uploading bill image:", uploadError);
+          setError("Failed to upload bill image. Please try again.");
+          setProcessing(false);
+          setUploadingBill(false);
+          return;
+        }
+      }
+
+      await VendorService.processGRN(poId, receivedItems, user.uid, billImageUrl);
       alert("GRN processed successfully! Inventory has been updated.");
       router.push(`/admin/vendors/${vendorId}/purchase-orders`);
-    } catch (err: any) {
-      setError(err.message || "Failed to process GRN");
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      setError(error.message || "Failed to process GRN");
     } finally {
       setProcessing(false);
+      setUploadingBill(false);
     }
   };
 
@@ -384,18 +419,71 @@ export default function PurchaseOrderDetailPage() {
                     </TableBody>
                   </Table>
                 </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="billImage">Vendor Bill Image (Optional)</Label>
+                  <Input
+                    id="billImage"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleBillImageChange}
+                    disabled={processing || uploadingBill}
+                  />
+                  {billImagePreview && (
+                    <div className="relative mt-2">
+                      <img
+                        src={billImagePreview}
+                        alt="Bill preview"
+                        className="max-w-xs h-auto rounded border"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="absolute top-2 right-2"
+                        onClick={() => {
+                          setBillImageFile(null);
+                          setBillImagePreview(null);
+                        }}
+                        disabled={processing || uploadingBill}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex gap-4 pt-4">
-                  <Button onClick={handleProcessGRN} disabled={processing}>
-                    {processing ? "Processing..." : "Process GRN"}
+                  <Button onClick={handleProcessGRN} disabled={processing || uploadingBill}>
+                    {processing || uploadingBill ? "Processing..." : "Process GRN"}
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => setShowGRNForm(false)}
-                    disabled={processing}
+                    onClick={() => {
+                      setShowGRNForm(false);
+                      setBillImageFile(null);
+                      setBillImagePreview(null);
+                    }}
+                    disabled={processing || uploadingBill}
                   >
                     Cancel
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {purchaseOrder.billImageUrl && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Vendor Bill</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <img
+                  src={purchaseOrder.billImageUrl}
+                  alt="Vendor bill"
+                  className="max-w-full h-auto rounded border"
+                />
               </CardContent>
             </Card>
           )}

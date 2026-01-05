@@ -5,6 +5,10 @@ import {
   addDoc,
   updateDoc,
   getDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -96,6 +100,34 @@ export class SaleService {
       return saleRef.id;
     } catch (error) {
       console.error("Error creating sale:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get sales for a date range
+   */
+  static async getSales(startDate: Date, endDate: Date): Promise<Sale[]> {
+    try {
+      const startTimestamp = Timestamp.fromDate(startDate);
+      const endTimestamp = Timestamp.fromDate(endDate);
+      
+      const q = query(
+        collection(db, "sales"),
+        where("createdAt", ">=", startTimestamp),
+        where("createdAt", "<=", endTimestamp),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const sales: Sale[] = [];
+      querySnapshot.forEach((doc) => {
+        sales.push({ id: doc.id, ...doc.data() } as Sale);
+      });
+
+      return sales;
+    } catch (error) {
+      console.error("Error fetching sales:", error);
       throw error;
     }
   }

@@ -132,8 +132,49 @@ export class BluetoothPrinter implements PrinterAdapter {
 
 // Printer Service
 export class PrinterService {
+  private static instance: PrinterService | null = null;
   private adapter: PrinterAdapter | null = null;
   private type: PrinterType | null = null;
+
+  static getInstance(): PrinterService {
+    if (!PrinterService.instance) {
+      PrinterService.instance = new PrinterService();
+    }
+    return PrinterService.instance;
+  }
+
+  static async getSettings(): Promise<{ type: PrinterType; connection?: PrinterConnection } | null> {
+    // Get printer settings from Firestore or localStorage
+    try {
+      const settings = localStorage.getItem("printerSettings");
+      if (settings) {
+        return JSON.parse(settings);
+      }
+    } catch {
+      // Ignore errors
+    }
+    return null;
+  }
+
+  static async connect(type: PrinterType): Promise<void> {
+    const instance = PrinterService.getInstance();
+    await instance.connect(type);
+  }
+
+  static async printText(text: string): Promise<void> {
+    const instance = PrinterService.getInstance();
+    if (!instance.adapter) {
+      throw new Error("Printer not connected");
+    }
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text);
+    await instance.adapter.print(data);
+  }
+
+  static async disconnect(): Promise<void> {
+    const instance = PrinterService.getInstance();
+    await instance.disconnect();
+  }
 
   async connect(type: PrinterType): Promise<void> {
     this.type = type;

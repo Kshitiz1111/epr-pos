@@ -39,15 +39,24 @@ export default function ProductDetailPage() {
     const cart = JSON.parse(localStorage.getItem("cart") || "[]");
     const existingItem = cart.find((item: any) => item.productId === productId);
 
+    if (!product) return;
+    
+    // Calculate effective price (with discount)
+    const effectivePrice = product.discount && product.discount > 0
+      ? product.price * (1 - product.discount / 100)
+      : product.price;
+
     if (existingItem) {
       existingItem.quantity += quantity;
     } else {
       cart.push({
-        productId: product?.id,
-        productName: product?.name,
-        price: product?.price,
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        price: effectivePrice,
+        originalPrice: product.discount && product.discount > 0 ? product.price : undefined,
         quantity,
-        imageUrl: product?.imageUrl,
+        imageUrl: product.imageUrl,
       });
     }
 
@@ -119,9 +128,19 @@ export default function ProductDetailPage() {
             <div>
               <h1 className="text-3xl font-bold mb-2">{product.name}</h1>
               <p className="text-gray-600 mb-4">{product.category}</p>
-              <p className="text-3xl font-bold text-green-600 mb-4">
-                Rs {product.price.toFixed(2)}
-              </p>
+              {product.discount && product.discount > 0 ? (
+                <div className="mb-4">
+                  <p className="text-xl text-gray-400 line-through">Rs {product.price.toFixed(2)}</p>
+                  <p className="text-3xl font-bold text-green-600">
+                    Rs {(product.price * (1 - product.discount / 100)).toFixed(2)}
+                  </p>
+                  <p className="text-sm text-red-600 font-semibold mt-1">-{product.discount.toFixed(0)}% OFF</p>
+                </div>
+              ) : (
+                <p className="text-3xl font-bold text-green-600 mb-4">
+                  Rs {product.price.toFixed(2)}
+                </p>
+              )}
             </div>
 
             {product.description && (

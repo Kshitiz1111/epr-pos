@@ -19,14 +19,20 @@ import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, Timestamp } fro
 import { db } from "@/lib/firebase";
 import { Warehouse } from "@/lib/types";
 import { usePermissions } from "@/lib/hooks/usePermissions";
-import { Plus } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Plus, Edit } from "lucide-react";
 
 export default function WarehousesPage() {
   const { hasPermission } = usePermissions();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
   const [formData, setFormData] = useState({
+    name: "",
+    address: "",
+  });
+  const [editFormData, setEditFormData] = useState({
     name: "",
     address: "",
   });
@@ -76,6 +82,33 @@ export default function WarehousesPage() {
       fetchWarehouses();
     } catch (error) {
       console.error("Error updating warehouse:", error);
+    }
+  };
+
+  const handleEdit = (warehouse: Warehouse) => {
+    setEditingWarehouse(warehouse);
+    setEditFormData({
+      name: warehouse.name,
+      address: warehouse.address || "",
+    });
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWarehouse) return;
+
+    try {
+      await updateDoc(doc(db, "warehouses", editingWarehouse.id), {
+        name: editFormData.name,
+        address: editFormData.address || undefined,
+        updatedAt: Timestamp.now(),
+      });
+      setEditingWarehouse(null);
+      fetchWarehouses();
+      alert("Warehouse updated successfully");
+    } catch (error) {
+      console.error("Error updating warehouse:", error);
+      alert("Failed to update warehouse");
     }
   };
 
@@ -170,13 +203,25 @@ export default function WarehousesPage() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleToggleActive(warehouse.id, warehouse.isActive)}
-                          >
-                            {warehouse.isActive ? "Deactivate" : "Activate"}
-                          </Button>
+                          <div className="flex gap-2 justify-end">
+                            {hasPermission("inventory", "update") && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleEdit(warehouse)}
+                              >
+                                <Edit className="mr-2 h-4 w-4" />
+                                Edit
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleToggleActive(warehouse.id, warehouse.isActive)}
+                            >
+                              {warehouse.isActive ? "Deactivate" : "Activate"}
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -186,6 +231,44 @@ export default function WarehousesPage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={editingWarehouse !== null} onOpenChange={(open) => !open && setEditingWarehouse(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Warehouse</DialogTitle>
+              <DialogDescription>Update warehouse information</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleUpdate} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">Warehouse Name</Label>
+                <Input
+                  id="edit-name"
+                  type="text"
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  required
+                  placeholder="Main Warehouse"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-address">Address</Label>
+                <Input
+                  id="edit-address"
+                  type="text"
+                  value={editFormData.address}
+                  onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
+                  placeholder="Warehouse address"
+                />
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditingWarehouse(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit">Update</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </AdminLayout>
     </ProtectedRoute>
   );

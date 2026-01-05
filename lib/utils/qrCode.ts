@@ -1,5 +1,5 @@
 // QR Code utility functions
-import { QRCodeSVG } from "react-qr-code";
+import QRCode from "react-qr-code";
 
 export interface QRCodeData {
   type: "item" | "product" | "sale";
@@ -41,5 +41,5 @@ export function generateProductQR(productId: string, sku: string) {
 /**
  * React component wrapper for QR code
  */
-export { QRCodeSVG };
+export { default as QRCodeSVG } from "react-qr-code";
 

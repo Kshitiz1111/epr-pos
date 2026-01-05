@@ -16,7 +16,7 @@ import { UserRole, EmployeePermissions } from "@/lib/types";
 const adminPermissions: EmployeePermissions = {
   resources: {
     inventory: { view: true, create: true, update: true, delete: true },
-    finance: { view: true, create: true, update: true },
+    finance: { view: true, create: true, update: true, delete: true },
     customers: {
       view: true,
       create: true,
@@ -29,6 +29,8 @@ const adminPermissions: EmployeePermissions = {
     vendors: { view: true, create: true, update: true, delete: true },
     pos: { view: true, create: true, update: true, delete: true },
     reports: { view: true, create: true, update: true, delete: true },
+    orders: { view: true, create: true, update: true, delete: true },
+    settings: { view: true, create: true, update: true, delete: true },
   },
 };
 

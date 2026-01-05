@@ -19,7 +19,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  createEmployee: (email: string, password: string, role: UserRole, permissions: EmployeePermissions, displayName?: string) => Promise<string>;
+  createEmployee: (email: string, password: string, role: UserRole, permissions: EmployeePermissions, displayName?: string, baseSalary?: number) => Promise<string>;
   refreshUser: () => Promise<void>;
 }
 
@@ -230,7 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const employeeProfile = {
       uid: firebaseUser.uid,
       role,
-      baseSalary: 0,
+      baseSalary: baseSalary || 0,
       joiningDate: serverTimestamp(),
       status: "ACTIVE" as const,
       finance: {

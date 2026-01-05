@@ -13,10 +13,10 @@ import { ProductService } from "@/lib/services/productService";
 import { useBarcodeScanner } from "@/lib/hooks/useBarcodeScanner";
 import { Product, SaleItem, Customer, PaymentMethod } from "@/lib/types";
 import { usePermissions } from "@/lib/hooks/usePermissions";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import Fuse from "fuse.js";
-import { Search, Trash2, ShoppingCart, User, Menu, X, LayoutDashboard, Package, User as UserIcon, LogOut } from "lucide-react";
+import { Search, Trash2, ShoppingCart, User, Menu, X, LayoutDashboard, Package, User as UserIcon, LogOut, Users, Warehouse, Building2, DollarSign, CreditCard, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
@@ -121,6 +121,10 @@ export default function POSPage() {
         )
       );
     } else {
+      const effectivePrice = product.discount && product.discount > 0
+        ? product.price * (1 - product.discount / 100)
+        : product.price;
+      
       setCart([
         ...cart,
         {
@@ -128,9 +132,9 @@ export default function POSPage() {
           productName: product.name,
           sku: product.sku,
           quantity: 1,
-          unitPrice: product.price,
-          discount: 0,
-          subtotal: product.price,
+          unitPrice: effectivePrice,
+          discount: product.discount || 0,
+          subtotal: effectivePrice,
         },
       ]);
     }
@@ -215,8 +219,9 @@ export default function POSPage() {
       setSelectedCustomer(null);
       setAdvancePayment(0);
       alert("Sale completed successfully!");
-    } catch (error: any) {
-      alert(error.message || "Failed to complete sale");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to complete sale";
+      alert(errorMessage);
     } finally {
       setProcessing(false);
     }
@@ -305,7 +310,39 @@ export default function POSPage() {
                     <ShoppingCart className="h-5 w-5" />
                     <span>POS</span>
                   </Link>
-                  
+
+                  {user?.role === "admin" && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                        pathname === "/admin"
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "text-gray-700 hover:bg-gray-100"
+                      )}
+                    >
+                      <LayoutDashboard className="h-5 w-5" />
+                      <span>Dashboard</span>
+                    </Link>
+                  )}
+
+                  {hasPermission("employees", "view") && (
+                    <Link
+                      href="/admin/employees"
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                        pathname?.startsWith("/admin/employees")
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "text-gray-700 hover:bg-gray-100"
+                      )}
+                    >
+                      <Users className="h-5 w-5" />
+                      <span>Employees</span>
+                    </Link>
+                  )}
+
                   {hasPermission("inventory", "view") && (
                     <Link
                       href="/admin/inventory/products"
@@ -322,13 +359,61 @@ export default function POSPage() {
                     </Link>
                   )}
 
+                  {hasPermission("inventory", "view") && (
+                    <Link
+                      href="/admin/inventory/warehouses"
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                        pathname?.startsWith("/admin/inventory/warehouses")
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "text-gray-700 hover:bg-gray-100"
+                      )}
+                    >
+                      <Warehouse className="h-5 w-5" />
+                      <span>Warehouses</span>
+                    </Link>
+                  )}
+
+                  {hasPermission("vendors", "view") && (
+                    <Link
+                      href="/admin/vendors"
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                        pathname?.startsWith("/admin/vendors")
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "text-gray-700 hover:bg-gray-100"
+                      )}
+                    >
+                      <Building2 className="h-5 w-5" />
+                      <span>Vendors</span>
+                    </Link>
+                  )}
+
+                  {hasPermission("finance", "view") && (
+                    <Link
+                      href="/admin/finance/ledger"
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                        pathname?.startsWith("/admin/finance")
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "text-gray-700 hover:bg-gray-100"
+                      )}
+                    >
+                      <DollarSign className="h-5 w-5" />
+                      <span>Finance</span>
+                    </Link>
+                  )}
+
                   {hasPermission("customers", "view") && (
                     <Link
                       href="/admin/customers"
                       onClick={() => setSidebarOpen(false)}
                       className={cn(
                         "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
-                        pathname?.startsWith("/admin/customers")
+                        pathname?.startsWith("/admin/customers") && !pathname?.startsWith("/admin/customers/credits")
                           ? "bg-blue-50 text-blue-700 font-medium"
                           : "text-gray-700 hover:bg-gray-100"
                       )}
@@ -338,19 +423,35 @@ export default function POSPage() {
                     </Link>
                   )}
 
-                  {user?.role === "admin" && (
+                  {hasPermission("customers", "viewCredits") && (
                     <Link
-                      href="/admin"
+                      href="/admin/customers/credits"
                       onClick={() => setSidebarOpen(false)}
                       className={cn(
                         "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
-                        pathname === "/admin"
+                        pathname?.startsWith("/admin/customers/credits")
                           ? "bg-blue-50 text-blue-700 font-medium"
                           : "text-gray-700 hover:bg-gray-100"
                       )}
                     >
-                      <LayoutDashboard className="h-5 w-5" />
-                      <span>Dashboard</span>
+                      <CreditCard className="h-5 w-5" />
+                      <span>Customer Credits</span>
+                    </Link>
+                  )}
+
+                  {user?.role === "admin" && (
+                    <Link
+                      href="/admin/orders"
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                        pathname?.startsWith("/admin/orders")
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "text-gray-700 hover:bg-gray-100"
+                      )}
+                    >
+                      <ShoppingBag className="h-5 w-5" />
+                      <span>Orders</span>
                     </Link>
                   )}
                 </nav>
@@ -425,7 +526,17 @@ export default function POSPage() {
                         )}
                         <h3 className="font-semibold text-xs md:text-sm mb-1 line-clamp-2">{product.name}</h3>
                         <p className="text-xs text-gray-500 mb-1">SKU: {product.sku}</p>
-                        <p className="font-bold text-green-600 text-xs md:text-sm">Rs {product.price.toFixed(2)}</p>
+                        {product.discount && product.discount > 0 ? (
+                          <div>
+                            <p className="text-xs text-gray-400 line-through">Rs {product.price.toFixed(2)}</p>
+                            <p className="font-bold text-green-600 text-xs md:text-sm">
+                              Rs {(product.price * (1 - product.discount / 100)).toFixed(2)}
+                            </p>
+                            <p className="text-xs text-red-600 font-semibold">-{product.discount.toFixed(0)}%</p>
+                          </div>
+                        ) : (
+                          <p className="font-bold text-green-600 text-xs md:text-sm">Rs {product.price.toFixed(2)}</p>
+                        )}
                         <p className={`text-xs ${totalStock === 0 ? "text-red-600" : "text-gray-500"}`}>
                           Stock: {totalStock}
                         </p>
@@ -570,6 +681,7 @@ export default function POSPage() {
                     <SelectItem value="CASH">Cash</SelectItem>
                     <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
                     <SelectItem value="FONE_PAY">FonePay</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -739,6 +851,7 @@ export default function POSPage() {
                     <SelectItem value="CASH">Cash</SelectItem>
                     <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
                     <SelectItem value="FONE_PAY">FonePay</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

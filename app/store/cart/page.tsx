@@ -6,31 +6,67 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Link from "next/link";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, Trash2, Download, Printer } from "lucide-react";
+import { useStoreAuth } from "@/contexts/StoreAuthContext";
+import { OrderService } from "@/lib/services/orderService";
+import { LoyaltyService } from "@/lib/services/loyaltyService";
+import { printReceipt, downloadReceiptHTML } from "@/lib/utils/receiptGenerator";
+import { Order, OrderItem } from "@/lib/types";
 
 interface CartItem {
   productId: string;
   productName: string;
+  sku?: string;
   price: number;
+  originalPrice?: number; // Original price before discount
   quantity: number;
   imageUrl?: string;
 }
 
 export default function CartPage() {
   const router = useRouter();
+  const { customer } = useStoreAuth();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [formData, setFormData] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    address: "",
+    name: customer?.name || "",
+    phone: customer?.phone || "",
+    email: customer?.email || "",
+    address: customer?.address || "",
   });
+  const [loyaltyPoints, setLoyaltyPoints] = useState(0);
+  const [loyaltyRules, setLoyaltyRules] = useState<any>(null);
+  const [pointsToRedeem, setPointsToRedeem] = useState(0);
+  const [discount, setDiscount] = useState(0);
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [orderPlaced, setOrderPlaced] = useState(false);
+  const [orderNumber, setOrderNumber] = useState("");
+  const [order, setOrder] = useState<Order | null>(null);
 
   useEffect(() => {
     const cartData = JSON.parse(localStorage.getItem("cart") || "[]");
     setCart(cartData);
-  }, []);
+    
+    // Load customer data if signed in
+    if (customer) {
+      loadLoyaltyData();
+    }
+  }, [customer]);
+
+  const loadLoyaltyData = async () => {
+    if (!customer) return;
+    
+    try {
+      const points = await LoyaltyService.getCustomerPoints(customer.id);
+      setLoyaltyPoints(points);
+      
+      const rules = await LoyaltyService.getLoyaltyRules();
+      setLoyaltyRules(rules);
+    } catch (error) {
+      console.error("Error loading loyalty data:", error);
+    }
+  };
 
   const updateCart = (newCart: CartItem[]) => {
     setCart(newCart);
@@ -49,17 +85,107 @@ export default function CartPage() {
     updateCart(newCart);
   };
 
-  const calculateTotal = () => {
+  const calculateSubtotal = () => {
     return cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  };
+
+  const calculateTotal = () => {
+    return Math.max(0, calculateSubtotal() - discount);
+  };
+
+  const handlePointsChange = (points: number) => {
+    if (!loyaltyRules || !customer) return;
+    
+    const subtotal = calculateSubtotal();
+    const maxPoints = LoyaltyService.calculateMaxRedeemablePoints(
+      loyaltyPoints,
+      subtotal,
+      loyaltyRules.redeemRate,
+      loyaltyRules.minPointsToRedeem
+    );
+    
+    const pointsToUse = Math.min(Math.max(0, points), maxPoints);
+    setPointsToRedeem(pointsToUse);
+    
+    const discountAmount = LoyaltyService.calculateDiscount(
+      pointsToUse,
+      loyaltyRules.redeemRate,
+      subtotal
+    );
+    setDiscount(discountAmount);
   };
 
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
-    // In a real implementation, this would create an order
-    // For now, we'll just show a success message
-    alert("Order placed successfully! You will receive a confirmation call.");
-    updateCart([]);
-    router.push("/store");
+    setPlacingOrder(true);
+
+    try {
+      const subtotal = calculateSubtotal();
+      const total = calculateTotal();
+
+      // Convert cart items to order items
+      const orderItems: OrderItem[] = cart.map(item => ({
+        productId: item.productId,
+        productName: item.productName,
+        sku: item.sku || "",
+        quantity: item.quantity,
+        unitPrice: item.price,
+        subtotal: item.price * item.quantity,
+        imageUrl: item.imageUrl,
+      }));
+
+      // Create order data
+      const orderData: any = {
+        customerInfo: {
+          name: formData.name,
+          phone: formData.phone,
+          address: formData.address,
+        },
+        items: orderItems,
+        subtotal,
+        discount,
+        total,
+        paymentMethod: "COD",
+        status: "PENDING",
+      };
+
+      // Only include customerId if customer is logged in
+      if (customer?.id) {
+        orderData.customerId = customer.id;
+      }
+
+      // Only include email if provided
+      if (formData.email) {
+        orderData.customerInfo.email = formData.email;
+      }
+
+      // Only include loyaltyPointsUsed if points are being redeemed
+      if (pointsToRedeem > 0) {
+        orderData.loyaltyPointsUsed = pointsToRedeem;
+      }
+
+      // Create order
+      const { orderId, orderNumber: newOrderNumber } = await OrderService.createOrder(orderData);
+
+      // Fetch the created order for receipt
+      const createdOrder = await OrderService.getOrder(orderId);
+      if (createdOrder) {
+        setOrder(createdOrder);
+        setOrderNumber(newOrderNumber);
+        setOrderPlaced(true);
+        
+        // Store order number in localStorage for guest tracking
+        localStorage.setItem("lastOrderNumber", newOrderNumber);
+        localStorage.setItem("lastOrderPhone", formData.phone);
+        
+        // Clear cart
+        updateCart([]);
+      }
+    } catch (error: any) {
+      alert(error.message || "Failed to place order. Please try again.");
+    } finally {
+      setPlacingOrder(false);
+    }
   };
 
   if (cart.length === 0) {
@@ -115,7 +241,17 @@ export default function CartPage() {
                     )}
                     <div className="flex-1">
                       <h3 className="font-semibold">{item.productName}</h3>
-                      <p className="text-gray-600">Rs {item.price.toFixed(2)} each</p>
+                      {item.originalPrice && item.originalPrice > item.price ? (
+                        <div>
+                          <p className="text-sm text-gray-400 line-through">Rs {item.originalPrice.toFixed(2)}</p>
+                          <p className="text-gray-600 font-semibold">Rs {item.price.toFixed(2)} each</p>
+                          <p className="text-xs text-red-600 font-semibold">
+                            -{((1 - item.price / item.originalPrice) * 100).toFixed(0)}% OFF
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-gray-600">Rs {item.price.toFixed(2)} each</p>
+                      )}
                       <div className="flex items-center gap-4 mt-2">
                         <div className="flex items-center gap-2">
                           <Button
@@ -205,11 +341,42 @@ export default function CartPage() {
                     />
                   </div>
 
+                  {customer && loyaltyRules && loyaltyPoints >= loyaltyRules.minPointsToRedeem && (
+                    <div className="space-y-2 border-t pt-4">
+                      <Label htmlFor="loyalty-points">Use Loyalty Points</Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="loyalty-points"
+                          type="number"
+                          min={0}
+                          max={loyaltyPoints}
+                          value={pointsToRedeem}
+                          onChange={(e) => handlePointsChange(parseInt(e.target.value) || 0)}
+                          placeholder="0"
+                        />
+                        <span className="text-sm text-gray-600">
+                          Available: {loyaltyPoints} points
+                        </span>
+                      </div>
+                      {pointsToRedeem > 0 && (
+                        <p className="text-sm text-green-600">
+                          Discount: Rs {discount.toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="border-t pt-4 space-y-2">
                     <div className="flex justify-between">
                       <span>Subtotal:</span>
-                      <span>Rs {calculateTotal().toFixed(2)}</span>
+                      <span>Rs {calculateSubtotal().toFixed(2)}</span>
                     </div>
+                    {discount > 0 && (
+                      <div className="flex justify-between text-green-600">
+                        <span>Discount:</span>
+                        <span>-Rs {discount.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between font-bold text-lg">
                       <span>Total:</span>
                       <span>Rs {calculateTotal().toFixed(2)}</span>
@@ -220,8 +387,8 @@ export default function CartPage() {
                     Payment: Cash on Delivery (COD)
                   </p>
 
-                  <Button type="submit" className="w-full" size="lg">
-                    Place Order
+                  <Button type="submit" className="w-full" size="lg" disabled={placingOrder}>
+                    {placingOrder ? "Placing Order..." : "Place Order"}
                   </Button>
                 </form>
               </CardContent>
@@ -229,6 +396,75 @@ export default function CartPage() {
           </div>
         </div>
       </div>
+
+      {/* Order Success Dialog */}
+      <Dialog open={orderPlaced} onOpenChange={setOrderPlaced}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Order Placed Successfully!</DialogTitle>
+            <DialogDescription>
+              Your order has been placed. Order Number: <strong>{orderNumber}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          
+          {order && (
+            <div className="space-y-4">
+              <div className="bg-gray-50 p-4 rounded">
+                <p className="text-sm"><strong>Order Number:</strong> {order.orderNumber}</p>
+                <p className="text-sm"><strong>Total:</strong> Rs {order.total.toFixed(2)}</p>
+                <p className="text-sm"><strong>Status:</strong> {order.status}</p>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => order && printReceipt(order)}
+                  className="flex-1"
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Print Receipt
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => order && downloadReceiptHTML(order)}
+                  className="flex-1"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download
+                </Button>
+              </div>
+
+              <div className="flex gap-2">
+                {customer ? (
+                  <Button
+                    onClick={() => router.push(`/store/orders/${orderNumber}`)}
+                    className="flex-1"
+                  >
+                    View Order
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => router.push(`/store/track`)}
+                    className="flex-1"
+                  >
+                    Track Order
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOrderPlaced(false);
+                    router.push("/store");
+                  }}
+                  className="flex-1"
+                >
+                  Continue Shopping
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

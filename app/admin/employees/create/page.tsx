@@ -16,7 +16,7 @@ import { UserRole, EmployeePermissions } from "@/lib/types";
 const defaultPermissions: EmployeePermissions = {
   resources: {
     inventory: { view: false, create: false, update: false, delete: false },
-    finance: { view: false, create: false, update: false },
+    finance: { view: false, create: false, update: false, delete: false },
     customers: {
       view: false,
       create: false,
@@ -29,6 +29,8 @@ const defaultPermissions: EmployeePermissions = {
     vendors: { view: false, create: false, update: false, delete: false },
     pos: { view: false, create: false, update: false, delete: false },
     reports: { view: false, create: false, update: false, delete: false },
+    orders: { view: false, create: false, update: false, delete: false },
+    settings: { view: false, create: false, update: false, delete: false },
   },
 };
 
@@ -43,6 +45,7 @@ export default function CreateEmployeePage() {
     password: "",
     displayName: "",
     role: "staff" as UserRole,
+    baseSalary: "",
   });
 
   const [permissions, setPermissions] = useState<EmployeePermissions>(defaultPermissions);
@@ -59,7 +62,8 @@ export default function CreateEmployeePage() {
         formData.password,
         formData.role,
         permissions,
-        formData.displayName
+        formData.displayName,
+        formData.baseSalary ? parseFloat(formData.baseSalary) : undefined
       );
 
       router.push("/admin/employees");
@@ -138,6 +142,19 @@ export default function CreateEmployeePage() {
                     <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="baseSalary">Base Salary (Rs)</Label>
+                <Input
+                  id="baseSalary"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.baseSalary}
+                  onChange={(e) => setFormData({ ...formData, baseSalary: e.target.value })}
+                  placeholder="0.00"
+                />
               </div>
             </CardContent>
           </Card>

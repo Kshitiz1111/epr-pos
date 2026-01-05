@@ -155,7 +155,19 @@ export default function ProductsPage() {
                           <TableCell className="font-mono text-sm">{product.sku}</TableCell>
                           <TableCell className="font-medium">{product.name}</TableCell>
                           <TableCell>{product.category}</TableCell>
-                          <TableCell>Rs {product.price.toFixed(2)}</TableCell>
+                          <TableCell>
+                            {product.discount && product.discount > 0 ? (
+                              <div>
+                                <p className="text-xs text-gray-400 line-through">Rs {product.price.toFixed(2)}</p>
+                                <p className="font-semibold text-green-600">
+                                  Rs {(product.price * (1 - product.discount / 100)).toFixed(2)}
+                                </p>
+                                <p className="text-xs text-red-600">-{product.discount.toFixed(0)}%</p>
+                              </div>
+                            ) : (
+                              <span>Rs {product.price.toFixed(2)}</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <span className={totalStock === 0 ? "text-red-600" : ""}>
                               {totalStock}

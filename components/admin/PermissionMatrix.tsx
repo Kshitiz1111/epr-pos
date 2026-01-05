@@ -21,6 +21,8 @@ const resourceLabels: Record<ResourceName, string> = {
   vendors: "Vendors",
   pos: "Point of Sale",
   reports: "Reports",
+  orders: "Orders",
+  settings: "Settings",
 };
 
 const actionLabels: Record<string, string> = {

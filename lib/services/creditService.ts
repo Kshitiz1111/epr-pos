@@ -12,7 +12,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { CreditTransaction, Customer } from "@/lib/types";
+import { CreditTransaction, Customer, PaymentMethod } from "@/lib/types";
 import { LedgerService } from "./ledgerService";
 
 export class CreditService {
@@ -64,6 +64,7 @@ export class CreditService {
     creditId: string,
     amount: number,
     settledBy: string,
+    paymentMethod: PaymentMethod,
     notes?: string
   ): Promise<void> {
     try {
