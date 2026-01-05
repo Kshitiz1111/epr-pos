@@ -99,8 +99,8 @@ export class FinanceReportService {
       let income = 0;
       let expenses = 0;
       const incomeBreakdown = {
-        sales: 0,
-        orders: 0,
+        sales: 0, // POS sales
+        orders: 0, // Online orders
         other: 0,
       };
       const expenseBreakdown = {
@@ -116,6 +116,7 @@ export class FinanceReportService {
         if (entry.type === "INCOME") {
           income += entry.amount;
           if (entry.category === "SALES") {
+            // This includes both POS sales (from ledger) and online orders (when confirmed)
             incomeBreakdown.sales += entry.amount;
           } else {
             incomeBreakdown.other += entry.amount;
@@ -144,15 +145,18 @@ export class FinanceReportService {
         }
       });
 
-      // Get online orders revenue (confirmed orders)
+      // Get online orders revenue (confirmed and completed orders)
+      // Note: Orders create ledger entries when confirmed, but we also track them separately
       const orders = await OrderService.getAllOrders({
-        status: "CONFIRMED",
         startDate,
         endDate,
       });
-      const ordersRevenue = orders.reduce((sum, order) => sum + order.total, 0);
+      const confirmedOrCompletedOrders = orders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
+      );
+      const ordersRevenue = confirmedOrCompletedOrders.reduce((sum, order) => sum + order.total, 0);
       incomeBreakdown.orders = ordersRevenue;
-      income += ordersRevenue;
+      // Note: Some orders may already be in ledger entries, but we track them separately for breakdown
 
       return {
         income,

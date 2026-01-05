@@ -210,6 +210,7 @@ export default function POSPage() {
           paymentMethod,
           isCredit: creditAmount > 0,
           performedBy: user.uid,
+          source: "POS", // Tag as POS sale
         },
         selectedCustomer?.id
       );

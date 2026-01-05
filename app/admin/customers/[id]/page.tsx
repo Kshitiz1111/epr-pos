@@ -25,7 +25,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { doc, getDoc, collection, query, where, getDocs, orderBy, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ArrowLeft, DollarSign, ShoppingBag } from "lucide-react";
+import { ArrowLeft, DollarSign } from "lucide-react";
 import Link from "next/link";
 
 export default function CustomerDetailPage() {
@@ -209,12 +209,18 @@ export default function CustomerDetailPage() {
     }
   };
 
-  // Calculate and update totalSpent from sales
+  // Calculate and update totalSpent from sales and orders
   const calculateAndUpdateTotalSpent = async () => {
-    if (!customer || !customerId || loadingSales) return;
+    if (!customer || !customerId || (loadingSales && loadingOrders)) return;
 
     try {
-      const calculatedTotal = sales.reduce((sum, sale) => sum + sale.total, 0);
+      // Calculate from sales
+      const salesTotal = sales.reduce((sum, sale) => sum + sale.total, 0);
+      // Calculate from orders (excluding cancelled)
+      const ordersTotal = orders
+        .filter((order) => order.status !== "CANCELLED")
+        .reduce((sum, order) => sum + order.total, 0);
+      const calculatedTotal = salesTotal + ordersTotal;
       const currentTotal = customer.totalSpent || 0;
       
       // Update if different (with small tolerance for floating point)
@@ -231,13 +237,13 @@ export default function CustomerDetailPage() {
     }
   };
 
-  // Recalculate totalSpent when both customer and sales are loaded
+  // Recalculate totalSpent when both customer, sales, and orders are loaded
   useEffect(() => {
-    if (customer && !loadingSales) {
+    if (customer && !loadingSales && !loadingOrders) {
       calculateAndUpdateTotalSpent();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customer?.id, loadingSales, sales.length]);
+  }, [customer?.id, loadingSales, loadingOrders, sales.length, orders.length]);
 
   const handleSettle = async () => {
     if (!selectedCredit || !user) return;
@@ -454,7 +460,7 @@ export default function CustomerDetailPage() {
               <CardContent className="space-y-4">
                 <div>
                   <p className="text-sm text-gray-600">Total Purchases</p>
-                  <p className="text-2xl font-bold">{sales.length}</p>
+                  <p className="text-2xl font-bold">{sales.length + orders.length}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Active Credits</p>
@@ -612,17 +618,27 @@ export default function CustomerDetailPage() {
               <CardDescription>All sales transactions for this customer</CardDescription>
             </CardHeader>
             <CardContent>
-              {loadingSales ? (
+              {loadingSales || loadingOrders ? (
                 <div className="text-center py-8">Loading purchase history...</div>
-              ) : salesError ? (
+              ) : salesError || ordersError ? (
                 <div className="text-center py-8">
                   <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
                     <p className="font-semibold">Error loading purchase history</p>
-                    <p className="text-sm mt-1">{salesError}</p>
+                    {salesError && <p className="text-sm mt-1">Sales: {salesError}</p>}
+                    {ordersError && <p className="text-sm mt-1">Orders: {ordersError}</p>}
                   </div>
-                  <Button variant="outline" onClick={fetchSales}>
-                    Retry
-                  </Button>
+                  <div className="flex gap-2 justify-center">
+                    {salesError && (
+                      <Button variant="outline" onClick={fetchSales}>
+                        Retry Sales
+                      </Button>
+                    )}
+                    {ordersError && (
+                      <Button variant="outline" onClick={fetchOrders}>
+                        Retry Orders
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <>
@@ -631,7 +647,7 @@ export default function CustomerDetailPage() {
                       <p className="text-sm">{salesWarning}</p>
                     </div>
                   )}
-                  {sales.length === 0 ? (
+                  {sales.length === 0 && orders.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   No purchase history found.
                 </div>
@@ -640,7 +656,8 @@ export default function CustomerDetailPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Sale ID</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead>ID/Order #</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Items</TableHead>
                         <TableHead>Total</TableHead>
@@ -651,6 +668,11 @@ export default function CustomerDetailPage() {
                     <TableBody>
                       {sales.map((sale) => (
                         <TableRow key={sale.id}>
+                          <TableCell>
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              POS
+                            </span>
+                          </TableCell>
                           <TableCell className="font-mono text-sm">{sale.id.slice(0, 8)}...</TableCell>
                           <TableCell>
                             {sale.createdAt.toDate().toLocaleDateString()}
@@ -669,67 +691,26 @@ export default function CustomerDetailPage() {
                           </TableCell>
                         </TableRow>
                       ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShoppingBag className="h-5 w-5" />
-                Online Orders
-              </CardTitle>
-              <CardDescription>Orders placed from the online store</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loadingOrders ? (
-                <div className="text-center py-8">Loading online orders...</div>
-              ) : ordersError ? (
-                <div className="text-center py-8">
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
-                    <p className="font-semibold">Error loading online orders</p>
-                    <p className="text-sm mt-1">{ordersError}</p>
-                  </div>
-                  <Button variant="outline" onClick={fetchOrders}>
-                    Retry
-                  </Button>
-                </div>
-              ) : orders.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No online orders found.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Order Number</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Items</TableHead>
-                        <TableHead>Total</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Payment</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
                       {orders.map((order) => (
                         <TableRow key={order.id}>
+                          <TableCell>
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              ONLINE
+                            </span>
+                          </TableCell>
                           <TableCell className="font-mono text-sm font-medium">
-                            {order.orderNumber}
+                            <Link href={`/admin/orders/${order.orderNumber}`} className="text-blue-600 hover:underline">
+                              {order.orderNumber}
+                            </Link>
                           </TableCell>
                           <TableCell>
                             {order.createdAt.toDate().toLocaleDateString()}
                           </TableCell>
-                          <TableCell>{order.items.length} item(s)</TableCell>
+                          <TableCell>{order.items.length} items</TableCell>
                           <TableCell className="font-medium">
                             Rs {order.total.toFixed(2)}
                           </TableCell>
+                          <TableCell>{order.paymentMethod}</TableCell>
                           <TableCell>
                             <span
                               className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -739,25 +720,21 @@ export default function CustomerDetailPage() {
                                   ? "bg-green-100 text-green-800"
                                   : order.status === "SHIPPED"
                                   ? "bg-blue-100 text-blue-800"
+                                  : order.status === "COMPLETED"
+                                  ? "bg-purple-100 text-purple-800"
                                   : "bg-red-100 text-red-800"
                               }`}
                             >
                               {order.status}
                             </span>
                           </TableCell>
-                          <TableCell>{order.paymentMethod}</TableCell>
-                          <TableCell className="text-right">
-                            <Link href={`/admin/orders/${order.orderNumber}`}>
-                              <Button variant="ghost" size="sm">
-                                View
-                              </Button>
-                            </Link>
-                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
+              )}
+                </>
               )}
             </CardContent>
           </Card>

@@ -10,6 +10,7 @@ import {
   where,
   orderBy,
   Timestamp,
+  QueryConstraint,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Order, OrderStatus } from "@/lib/types";
@@ -71,6 +72,7 @@ export class OrderService {
         status: OrderStatus;
         loyaltyPointsEarned: number;
         loyaltyPointsUsed: number;
+        source: "POS" | "ONLINE";
         createdAt: Timestamp;
         updatedAt: Timestamp;
         customerId?: string;
@@ -88,6 +90,7 @@ export class OrderService {
         status: orderData.status,
         loyaltyPointsEarned,
         loyaltyPointsUsed,
+        source: "ONLINE", // Tag as online order
         createdAt: now,
         updatedAt: now,
       };
@@ -159,20 +162,33 @@ export class OrderService {
   }): Promise<Order[]> {
     try {
       let q = query(collection(db, "orders"));
+      const conditions: QueryConstraint[] = [];
 
-      // Try with orderBy first, but handle missing index gracefully
-      try {
-        q = query(q, orderBy("createdAt", "desc"));
-      } catch {
-        console.warn("Could not apply orderBy, will sort in memory");
-      }
-
+      // Add status filter if provided
       if (filters?.status) {
-        q = query(q, where("status", "==", filters.status));
+        conditions.push(where("status", "==", filters.status));
       }
 
+      // Add customerId filter if provided
       if (filters?.customerId) {
-        q = query(q, where("customerId", "==", filters.customerId));
+        conditions.push(where("customerId", "==", filters.customerId));
+      }
+
+      // Try to add orderBy, but handle missing index gracefully
+      let useOrderBy = false;
+      if (conditions.length === 0) {
+        // Only use orderBy if no other filters (avoids composite index requirement)
+        try {
+          q = query(q, orderBy("createdAt", "desc"));
+          useOrderBy = true;
+        } catch {
+          console.warn("Could not apply orderBy, will sort in memory");
+        }
+      }
+
+      // Apply conditions
+      if (conditions.length > 0) {
+        q = query(q, ...conditions);
       }
 
       const querySnapshot = await getDocs(q);
@@ -182,7 +198,7 @@ export class OrderService {
         const data = doc.data();
         const order = { id: doc.id, ...data } as Order;
 
-        // Apply date filters in memory if needed (Firestore has limitations)
+        // Apply date filters in memory (Firestore composite index limitations)
         if (filters?.startDate || filters?.endDate) {
           const orderDate = order.createdAt.toDate();
           if (filters?.startDate && orderDate < filters.startDate) {
@@ -197,7 +213,7 @@ export class OrderService {
       });
 
       // Sort by createdAt desc if orderBy wasn't applied
-      if (!filters?.status && !filters?.customerId) {
+      if (!useOrderBy) {
         orders.sort((a, b) => {
           const aTime = a.createdAt?.toMillis() || 0;
           const bTime = b.createdAt?.toMillis() || 0;

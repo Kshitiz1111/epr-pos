@@ -151,6 +151,7 @@ export type Sale = {
   paymentMethod: PaymentMethod;
   isCredit: boolean;
   performedBy: string; // User ID
+  source?: "POS" | "ONLINE"; // Transaction source
   createdAt: Timestamp;
 };
 
@@ -274,6 +275,7 @@ export type Order = {
   loyaltyPointsUsed?: number; // Points redeemed for this order
   loyaltyPointsEarned?: number; // Points earned from this order
   notes?: string; // Admin notes
+  source?: "POS" | "ONLINE"; // Transaction source (default: "ONLINE")
   createdAt: Timestamp;
   updatedAt: Timestamp;
   confirmedAt?: Timestamp;
