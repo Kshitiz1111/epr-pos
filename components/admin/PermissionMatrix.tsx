@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -34,8 +34,63 @@ const actionLabels: Record<string, string> = {
   settleCredits: "Settle Credits",
 };
 
+// Complete list of all resources - always show all of them
+const allResources: ResourceName[] = [
+  "inventory",
+  "finance",
+  "customers",
+  "employees",
+  "vendors",
+  "pos",
+  "reports",
+  "orders",
+  "settings",
+];
+
 export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProps) {
   const [localPermissions, setLocalPermissions] = useState<EmployeePermissions>(permissions);
+
+  // Sync localPermissions when permissions prop changes
+  useEffect(() => {
+    setLocalPermissions(permissions);
+  }, [permissions]);
+
+  // Merge permissions with defaults to ensure all resources are present
+  const getCompletePermissions = (): EmployeePermissions => {
+    const defaultPermissions: EmployeePermissions = {
+      resources: {
+        inventory: { view: false, create: false, update: false, delete: false },
+        finance: { view: false, create: false, update: false, delete: false },
+        customers: {
+          view: false,
+          create: false,
+          update: false,
+          delete: false,
+          viewCredits: false,
+          settleCredits: false,
+        },
+        employees: { view: false, create: false, update: false, delete: false },
+        vendors: { view: false, create: false, update: false, delete: false },
+        pos: { view: false, create: false, update: false, delete: false },
+        reports: { view: false, create: false, update: false, delete: false },
+        orders: { view: false, create: false, update: false, delete: false },
+        settings: { view: false, create: false, update: false, delete: false },
+      },
+    };
+
+    return {
+      resources: {
+        ...defaultPermissions.resources,
+        ...localPermissions.resources,
+        customers: {
+          ...defaultPermissions.resources.customers,
+          ...(localPermissions.resources.customers || {}),
+        },
+      },
+    };
+  };
+
+  const completePermissions = getCompletePermissions();
 
   const updatePermission = (
     resource: ResourceName,
@@ -43,6 +98,10 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
     value: boolean
   ) => {
     const newPermissions = { ...localPermissions };
+    // Ensure resource exists in newPermissions
+    if (!newPermissions.resources[resource]) {
+      newPermissions.resources[resource] = completePermissions.resources[resource];
+    }
     const resourcePerms = newPermissions.resources[resource];
 
     if (resource === "customers" && (action === "viewCredits" || action === "settleCredits")) {
@@ -65,8 +124,8 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
       </CardHeader>
       <CardContent>
         <div className="space-y-6">
-          {(Object.keys(localPermissions.resources) as ResourceName[]).map((resource) => {
-            const resourcePerms = localPermissions.resources[resource];
+          {allResources.map((resource) => {
+            const resourcePerms = completePermissions.resources[resource];
             const isCustomers = resource === "customers";
 
             return (

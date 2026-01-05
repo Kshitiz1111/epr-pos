@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ export default function FinanceReportsPage() {
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
 
-  const generateReport = async () => {
+  const generateReport = useCallback(async () => {
     setLoading(true);
     try {
       const start = new Date(startDate);
@@ -72,11 +72,11 @@ export default function FinanceReportsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [reportType, startDate, endDate]);
 
   useEffect(() => {
     generateReport();
-  }, []);
+  }, [generateReport]);
 
   return (
     <ProtectedRoute requiredPermission={{ resource: "finance", action: "view" }}>

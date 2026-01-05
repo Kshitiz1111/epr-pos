@@ -226,15 +226,25 @@ export class VendorService {
         balance: newBalance,
       });
 
-      // Create payment record in subcollection
-      await addDoc(collection(db, "vendors", vendorId, "payments"), {
+      // Create payment record in subcollection - only include fields that have values
+      const paymentData: any = {
         amount,
         paymentMethod,
-        notes: notes || undefined,
-        imageUrl: imageUrl || undefined,
         performedBy,
         createdAt: Timestamp.now(),
-      });
+      };
+
+      // Only add notes if it has a value
+      if (notes && notes.trim()) {
+        paymentData.notes = notes.trim();
+      }
+
+      // Only add imageUrl if it has a value
+      if (imageUrl) {
+        paymentData.imageUrl = imageUrl;
+      }
+
+      await addDoc(collection(db, "vendors", vendorId, "payments"), paymentData);
 
       // Create ledger entry
       await LedgerService.createExpense(

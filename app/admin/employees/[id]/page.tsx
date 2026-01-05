@@ -55,30 +55,43 @@ export default function EmployeeDetailPage() {
         });
         
         // Initialize permissions from userData or create default
+        // Always merge with complete default structure to ensure all resources are present
+        const defaultPermissions: EmployeePermissions = {
+          resources: {
+            inventory: { view: false, create: false, update: false, delete: false },
+            finance: { view: false, create: false, update: false, delete: false },
+            customers: {
+              view: false,
+              create: false,
+              update: false,
+              delete: false,
+              viewCredits: false,
+              settleCredits: false,
+            },
+            employees: { view: false, create: false, update: false, delete: false },
+            vendors: { view: false, create: false, update: false, delete: false },
+            pos: { view: false, create: false, update: false, delete: false },
+            reports: { view: false, create: false, update: false, delete: false },
+            orders: { view: false, create: false, update: false, delete: false },
+            settings: { view: false, create: false, update: false, delete: false },
+          },
+        };
+        
         if (userData?.permissions) {
-          setPermissions(userData.permissions);
-        } else {
-          // Create default permissions structure if missing
-          const defaultPermissions: EmployeePermissions = {
+          // Merge existing permissions with defaults to ensure all resources are present
+          const mergedPermissions: EmployeePermissions = {
             resources: {
-              inventory: { view: false, create: false, update: false, delete: false },
-              finance: { view: false, create: false, update: false, delete: false },
+              ...defaultPermissions.resources,
+              ...userData.permissions.resources,
+              // Ensure customers resource has all fields
               customers: {
-                view: false,
-                create: false,
-                update: false,
-                delete: false,
-                viewCredits: false,
-                settleCredits: false,
+                ...defaultPermissions.resources.customers,
+                ...(userData.permissions.resources.customers || {}),
               },
-              employees: { view: false, create: false, update: false, delete: false },
-              vendors: { view: false, create: false, update: false, delete: false },
-              pos: { view: false, create: false, update: false, delete: false },
-              reports: { view: false, create: false, update: false, delete: false },
-              orders: { view: false, create: false, update: false, delete: false },
-              settings: { view: false, create: false, update: false, delete: false },
             },
           };
+          setPermissions(mergedPermissions);
+        } else {
           setPermissions(defaultPermissions);
         }
       }

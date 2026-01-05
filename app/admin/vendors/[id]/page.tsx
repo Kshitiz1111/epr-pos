@@ -34,6 +34,7 @@ export default function VendorDetailPage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<Array<{
     id: string;
     amount: number;
@@ -80,11 +81,13 @@ export default function VendorDetailPage() {
 
   const fetchPaymentHistory = async () => {
     setLoadingHistory(true);
+    setHistoryError(null);
     try {
       const history = await VendorService.getVendorPaymentHistory(vendorId);
       setPaymentHistory(history);
     } catch (error) {
       console.error("Error fetching payment history:", error);
+      setHistoryError("Failed to load payment history. Please try again.");
     } finally {
       setLoadingHistory(false);
     }
@@ -335,39 +338,75 @@ export default function VendorDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Payment History</CardTitle>
-              <CardDescription>History of payments made to this vendor</CardDescription>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Payment History</CardTitle>
+                  <CardDescription>History of payments made to this vendor</CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchPaymentHistory}
+                  disabled={loadingHistory}
+                >
+                  Refresh
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {loadingHistory ? (
                 <div className="text-center py-4">Loading payment history...</div>
+              ) : historyError ? (
+                <div className="text-center py-4">
+                  <p className="text-red-600 mb-2">{historyError}</p>
+                  <Button variant="outline" size="sm" onClick={fetchPaymentHistory}>
+                    Retry
+                  </Button>
+                </div>
               ) : paymentHistory.length === 0 ? (
                 <div className="text-center py-4 text-gray-500">No payment history available</div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Payment Method</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead>Performed By</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paymentHistory.map((payment) => (
-                      <TableRow key={payment.id}>
-                        <TableCell>
-                          {payment.createdAt?.toDate?.()?.toLocaleDateString() || "N/A"}
-                        </TableCell>
-                        <TableCell>Rs {payment.amount.toFixed(2)}</TableCell>
-                        <TableCell>{payment.paymentMethod}</TableCell>
-                        <TableCell>{payment.notes || "-"}</TableCell>
-                        <TableCell>{payment.performedBy}</TableCell>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Payment Method</TableHead>
+                        <TableHead>Notes</TableHead>
+                        <TableHead>Receipt</TableHead>
+                        <TableHead>Performed By</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {paymentHistory.map((payment) => (
+                        <TableRow key={payment.id}>
+                          <TableCell>
+                            {payment.createdAt?.toDate?.()?.toLocaleString() || "N/A"}
+                          </TableCell>
+                          <TableCell className="font-medium">Rs {payment.amount.toFixed(2)}</TableCell>
+                          <TableCell>{payment.paymentMethod}</TableCell>
+                          <TableCell>{payment.notes || "-"}</TableCell>
+                          <TableCell>
+                            {payment.imageUrl ? (
+                              <a
+                                href={payment.imageUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                View Receipt
+                              </a>
+                            ) : (
+                              "-"
+                            )}
+                          </TableCell>
+                          <TableCell>{payment.performedBy}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>

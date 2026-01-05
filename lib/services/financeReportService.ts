@@ -94,13 +94,26 @@ export class FinanceReportService {
     endDate: Date
   ): Promise<PLStatement> {
     try {
+      // Get actual POS sales and online orders directly (more accurate than ledger alone)
+      const sales = await SaleService.getSales(startDate, endDate);
+      const posSalesRevenue = sales.reduce((sum, sale) => sum + sale.total, 0);
+
+      const orders = await OrderService.getAllOrders({
+        startDate,
+        endDate,
+      });
+      const confirmedOrCompletedOrders = orders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
+      );
+      const onlineOrdersRevenue = confirmedOrCompletedOrders.reduce((sum, order) => sum + order.total, 0);
+
+      // Get expenses from ledger
       const entries = await LedgerService.getEntries(startDate, endDate);
 
-      let income = 0;
       let expenses = 0;
       const incomeBreakdown = {
-        sales: 0, // POS sales
-        orders: 0, // Online orders
+        sales: posSalesRevenue, // POS sales revenue
+        orders: onlineOrdersRevenue, // Online orders revenue
         other: 0,
       };
       const expenseBreakdown = {
@@ -112,13 +125,11 @@ export class FinanceReportService {
         other: 0,
       };
 
+      // Calculate expenses and other income from ledger
       entries.forEach((entry) => {
         if (entry.type === "INCOME") {
-          income += entry.amount;
-          if (entry.category === "SALES") {
-            // This includes both POS sales (from ledger) and online orders (when confirmed)
-            incomeBreakdown.sales += entry.amount;
-          } else {
+          // Only count other income (not sales, as we're using direct sales/orders data)
+          if (entry.category !== "SALES") {
             incomeBreakdown.other += entry.amount;
           }
         } else if (entry.type === "EXPENSE") {
@@ -145,18 +156,8 @@ export class FinanceReportService {
         }
       });
 
-      // Get online orders revenue (confirmed and completed orders)
-      // Note: Orders create ledger entries when confirmed, but we also track them separately
-      const orders = await OrderService.getAllOrders({
-        startDate,
-        endDate,
-      });
-      const confirmedOrCompletedOrders = orders.filter(
-        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
-      );
-      const ordersRevenue = confirmedOrCompletedOrders.reduce((sum, order) => sum + order.total, 0);
-      incomeBreakdown.orders = ordersRevenue;
-      // Note: Some orders may already be in ledger entries, but we track them separately for breakdown
+      // Total income = POS sales + Online orders + Other income
+      const income = posSalesRevenue + onlineOrdersRevenue + incomeBreakdown.other;
 
       return {
         income,
@@ -179,6 +180,17 @@ export class FinanceReportService {
     endDate: Date
   ): Promise<CashFlow> {
     try {
+      // Get actual sales and orders for accurate cash flow
+      const sales = await SaleService.getSales(startDate, endDate);
+      const orders = await OrderService.getAllOrders({
+        startDate,
+        endDate,
+      });
+      const confirmedOrCompletedOrders = orders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
+      );
+
+      // Get expenses from ledger
       const entries = await LedgerService.getEntries(startDate, endDate);
 
       const cashInBreakdown = {
@@ -192,8 +204,41 @@ export class FinanceReportService {
         fonePay: 0,
       };
 
+      // Process POS sales
+      sales.forEach((sale) => {
+        switch (sale.paymentMethod) {
+          case "CASH":
+            cashInBreakdown.cash += sale.total;
+            break;
+          case "BANK_TRANSFER":
+            cashInBreakdown.bankTransfer += sale.total;
+            break;
+          case "FONE_PAY":
+            cashInBreakdown.fonePay += sale.total;
+            break;
+        }
+      });
+
+      // Process online orders (map COD to CASH, others directly)
+      confirmedOrCompletedOrders.forEach((order) => {
+        const paymentMethod = order.paymentMethod === "COD" ? "CASH" : order.paymentMethod;
+        switch (paymentMethod) {
+          case "CASH":
+            cashInBreakdown.cash += order.total;
+            break;
+          case "BANK_TRANSFER":
+            cashInBreakdown.bankTransfer += order.total;
+            break;
+          case "FONE_PAY":
+            cashInBreakdown.fonePay += order.total;
+            break;
+        }
+      });
+
+      // Process other income and expenses from ledger
       entries.forEach((entry) => {
-        if (entry.type === "INCOME") {
+        if (entry.type === "INCOME" && entry.category !== "SALES") {
+          // Other income (not sales, as we've already processed sales/orders)
           switch (entry.paymentMethod) {
             case "CASH":
               cashInBreakdown.cash += entry.amount;
@@ -215,6 +260,10 @@ export class FinanceReportService {
               break;
             case "FONE_PAY":
               cashOutBreakdown.fonePay += entry.amount;
+              break;
+            case "CHEQUE":
+              // Cheque is typically bank transfer
+              cashOutBreakdown.bankTransfer += entry.amount;
               break;
           }
         }
@@ -273,27 +322,44 @@ export class FinanceReportService {
         }
       });
 
-      // Calculate cash from ledger entries (net of all income and expenses)
-      // This is a simplified calculation - in production, you'd track opening balance
+      // Calculate cash from actual sales and orders + ledger entries
+      // Get all POS sales with CASH payment
+      const allSales = await SaleService.getSales(new Date(0), new Date());
+      let cashFromSales = 0;
+      allSales.forEach((sale) => {
+        if (sale.paymentMethod === "CASH") {
+          cashFromSales += sale.total;
+        }
+      });
+
+      // Get all confirmed/completed orders with COD (which is CASH)
+      const allOrders = await OrderService.getAllOrders({});
+      const allConfirmedOrders = allOrders.filter(
+        (o) => (o.status === "CONFIRMED" || o.status === "COMPLETED") && o.paymentMethod === "COD"
+      );
+      const cashFromOrders = allConfirmedOrders.reduce((sum, order) => sum + order.total, 0);
+
+      // Get cash from ledger (other income and expenses)
       const allEntries = await LedgerService.getEntries(
         new Date(0), // From beginning
         new Date() // To now
       );
       
-      let cash = 0;
+      let cashFromLedger = 0;
       allEntries.forEach((entry) => {
-        if (entry.type === "INCOME") {
-          // Only count cash payments as actual cash
+        // Skip SALES category as we've already counted from actual sales/orders
+        if (entry.type === "INCOME" && entry.category !== "SALES") {
           if (entry.paymentMethod === "CASH") {
-            cash += entry.amount;
+            cashFromLedger += entry.amount;
           }
         } else if (entry.type === "EXPENSE") {
-          // Subtract cash expenses
           if (entry.paymentMethod === "CASH") {
-            cash -= entry.amount;
+            cashFromLedger -= entry.amount;
           }
         }
       });
+
+      const cash = cashFromSales + cashFromOrders + cashFromLedger;
 
       const assets = {
         cash: cash || 0,
@@ -343,19 +409,21 @@ export class FinanceReportService {
       const sales = await SaleService.getSales(startDate, endDate);
       const totalSales = sales.reduce((sum, sale) => sum + sale.total, 0);
 
-      // Get online orders
+      // Get online orders (include both CONFIRMED and COMPLETED)
       const orders = await OrderService.getAllOrders({
         startDate,
         endDate,
       });
-      const confirmedOrders = orders.filter((o) => o.status === "CONFIRMED");
-      const ordersRevenue = confirmedOrders.reduce(
+      const confirmedOrCompletedOrders = orders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
+      );
+      const ordersRevenue = confirmedOrCompletedOrders.reduce(
         (sum, order) => sum + order.total,
         0
       );
 
       const totalRevenue = totalSales + ordersRevenue;
-      const totalOrderCount = sales.length + confirmedOrders.length;
+      const totalOrderCount = sales.length + confirmedOrCompletedOrders.length;
       const averageOrderValue =
         totalOrderCount > 0 ? totalRevenue / totalOrderCount : 0;
 
@@ -375,7 +443,7 @@ export class FinanceReportService {
         });
       });
 
-      confirmedOrders.forEach((order) => {
+      confirmedOrCompletedOrders.forEach((order) => {
         order.items.forEach((item) => {
           const existing = productMap.get(item.productId) || {
             name: item.productName,
@@ -413,7 +481,7 @@ export class FinanceReportService {
         }
       });
 
-      confirmedOrders.forEach((order) => {
+      confirmedOrCompletedOrders.forEach((order) => {
         if (order.customerId) {
           const existing = customerMap.get(order.customerId) || {
             name: order.customerInfo.name,
