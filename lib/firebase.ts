@@ -6,15 +6,14 @@ import { getAnalytics, Analytics } from "firebase/analytics";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBdvIEr7adqfx1X-Pp2Hw2s3q2flu0pMrc",
-  authDomain: "epr-pos.firebaseapp.com",
-  projectId: "epr-pos",
-  storageBucket: "epr-pos.firebasestorage.app",
-  messagingSenderId: "1060244145838",
-  appId: "1:1060244145838:web:8e2b8f3788add8e69ecf3f",
-  measurementId: "G-47FZSWJRTL"
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
-
 // Initialize Firebase (singleton pattern)
 let app: FirebaseApp;
 let auth: Auth;
