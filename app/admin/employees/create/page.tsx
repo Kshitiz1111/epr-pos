@@ -30,6 +30,7 @@ const defaultPermissions: EmployeePermissions = {
     pos: { view: false, create: false, update: false, delete: false },
     reports: { view: false, create: false, update: false, delete: false },
     orders: { view: false, create: false, update: false, delete: false },
+    hr: { view: false, create: false, update: false, delete: false },
     settings: { view: false, create: false, update: false, delete: false },
   },
 };

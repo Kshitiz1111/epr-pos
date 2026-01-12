@@ -4,7 +4,7 @@ import { SaleService } from "./saleService";
 import { OrderService } from "./orderService";
 import { VendorService } from "./vendorService";
 import { CreditService } from "./creditService";
-import { LedgerEntry, Sale, Order } from "@/lib/types";
+// Types are imported as needed in the code
 
 export interface PLStatement {
   income: number;
@@ -33,11 +33,15 @@ export interface CashFlow {
     cash: number;
     bankTransfer: number;
     fonePay: number;
+    cheque: number;
+    credit: number;
   };
   cashOutBreakdown: {
     cash: number;
     bankTransfer: number;
     fonePay: number;
+    cheque: number;
+    credit: number;
   };
 }
 
@@ -107,17 +111,27 @@ export class FinanceReportService {
       );
       const onlineOrdersRevenue = confirmedOrCompletedOrders.reduce((sum, order) => sum + order.total, 0);
 
-      // Get expenses from ledger
-      const entries = await LedgerService.getEntries(startDate, endDate);
+      // Get purchase orders and ledger entries
+      const [entries, purchaseOrders] = await Promise.all([
+        LedgerService.getEntries(startDate, endDate),
+        VendorService.getPurchaseOrdersByDateRange(startDate, endDate),
+      ]);
 
-      let expenses = 0;
+      // Calculate expenses from actual purchase orders (received)
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+      const purchaseOrderExpenses = receivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
+      );
+
+      let expenses = purchaseOrderExpenses;
       const incomeBreakdown = {
         sales: posSalesRevenue, // POS sales revenue
         orders: onlineOrdersRevenue, // Online orders revenue
         other: 0,
       };
       const expenseBreakdown = {
-        purchases: 0,
+        purchases: purchaseOrderExpenses, // Purchase orders expenses
         vendorPayments: 0,
         salaries: 0,
         rent: 0,
@@ -125,8 +139,30 @@ export class FinanceReportService {
         other: 0,
       };
 
-      // Calculate expenses and other income from ledger
-      entries.forEach((entry) => {
+      // Calculate expenses and other income from ledger (excluding auto-generated entries)
+      const manualLedgerEntries = entries.filter((entry) => {
+        // Exclude auto-generated sales entries
+        if (entry.category === "SALES" && entry.relatedId) {
+          return false;
+        }
+        // Exclude auto-generated purchase order entries
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
+        return true;
+      });
+
+      manualLedgerEntries.forEach((entry) => {
         if (entry.type === "INCOME") {
           // Only count other income (not sales, as we're using direct sales/orders data)
           if (entry.category !== "SALES") {
@@ -135,12 +171,6 @@ export class FinanceReportService {
         } else if (entry.type === "EXPENSE") {
           expenses += entry.amount;
           switch (entry.category) {
-            case "PURCHASE":
-              expenseBreakdown.purchases += entry.amount;
-              break;
-            case "VENDOR_PAY":
-              expenseBreakdown.vendorPayments += entry.amount;
-              break;
             case "SALARY":
               expenseBreakdown.salaries += entry.amount;
               break;
@@ -197,14 +227,19 @@ export class FinanceReportService {
         cash: 0,
         bankTransfer: 0,
         fonePay: 0,
+        cheque: 0,
+        credit: 0,
       };
       const cashOutBreakdown = {
         cash: 0,
         bankTransfer: 0,
         fonePay: 0,
+        cheque: 0,
+        credit: 0,
       };
 
-      // Process POS sales
+      // Process POS sales (accrual accounting: include all sales as income when sale happens)
+      // All payment methods are included as cash in (accrual accounting)
       sales.forEach((sale) => {
         switch (sale.paymentMethod) {
           case "CASH":
@@ -216,27 +251,72 @@ export class FinanceReportService {
           case "FONE_PAY":
             cashInBreakdown.fonePay += sale.total;
             break;
+          case "CHEQUE":
+            cashInBreakdown.cheque += sale.total;
+            break;
+          case "CREDIT":
+            // Credit sales: include as cash in (accrual accounting - income when sale happens)
+            cashInBreakdown.credit += sale.total;
+            break;
         }
       });
 
-      // Process online orders (map COD to CASH, others directly)
+      // Process online orders (accrual accounting: include all orders as income when order happens)
+      // All orders are included as cash in (accrual accounting - income when order happens)
       confirmedOrCompletedOrders.forEach((order) => {
-        const paymentMethod = order.paymentMethod === "COD" ? "CASH" : order.paymentMethod;
-        switch (paymentMethod) {
-          case "CASH":
+        // Map COD to CASH, others to their respective categories
+        // In accrual accounting, all orders count as income regardless of payment method
+        if (order.paymentMethod === "COD" || order.paymentMethod === "BANK_TRANSFER") {
+          // COD is cash on delivery, BANK_TRANSFER goes to bank
+          if (order.paymentMethod === "COD") {
             cashInBreakdown.cash += order.total;
-            break;
-          case "BANK_TRANSFER":
+          } else {
             cashInBreakdown.bankTransfer += order.total;
-            break;
-          case "FONE_PAY":
-            cashInBreakdown.fonePay += order.total;
-            break;
+          }
+        } else if (order.paymentMethod === "FONE_PAY") {
+          cashInBreakdown.fonePay += order.total;
+        } else {
+          // Default to CASH for any other payment method (accrual accounting)
+          cashInBreakdown.cash += order.total;
         }
+      });
+
+      // Get purchase orders for cash flow (accrual accounting: include as expenses when purchase happens)
+      const purchaseOrders = await VendorService.getPurchaseOrdersByDateRange(startDate, endDate);
+      
+      // Process purchase orders (received) as cash out (accrual accounting - expense when purchase happens)
+      // Purchase orders are included as cash out (even though cash not paid yet)
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+      receivedPOs.forEach((po) => {
+        const poAmount = po.receivedTotalAmount ?? po.totalAmount;
+        // Purchase orders are typically on credit, but we include as cash out (accrual accounting)
+        // Categorize as CREDIT since they're typically on credit terms
+        cashOutBreakdown.credit += poAmount;
+      });
+
+      // Filter ledger entries (excluding auto-generated entries, but including VENDOR_PAY for cash flow)
+      const validEntries = entries.filter((entry) => {
+        // Exclude auto-generated sales entries
+        if (entry.category === "SALES" && entry.relatedId) {
+          return false;
+        }
+        // Exclude auto-generated purchase order entries (we're using actual PO data above)
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Include VENDOR_PAY entries for cash flow (these are actual cash outflows)
+        // But note: VENDOR_PAY doesn't create new expense (already recorded in PO), just cash movement
+        // Exclude credit settlement entries (these are just collections, not new income)
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
+        return true;
       });
 
       // Process other income and expenses from ledger
-      entries.forEach((entry) => {
+      validEntries.forEach((entry) => {
         if (entry.type === "INCOME" && entry.category !== "SALES") {
           // Other income (not sales, as we've already processed sales/orders)
           switch (entry.paymentMethod) {
@@ -249,8 +329,16 @@ export class FinanceReportService {
             case "FONE_PAY":
               cashInBreakdown.fonePay += entry.amount;
               break;
+            case "CHEQUE":
+              cashInBreakdown.cheque += entry.amount;
+              break;
+            case "CREDIT":
+              cashInBreakdown.credit += entry.amount;
+              break;
           }
-        } else if (entry.type === "EXPENSE") {
+        } else if (entry.type === "EXPENSE" || entry.category === "VENDOR_PAY") {
+          // Include all expenses AND VENDOR_PAY entries (these are actual cash outflows)
+          // Note: VENDOR_PAY is excluded from P&L expenses but included in cash flow
           switch (entry.paymentMethod) {
             case "CASH":
               cashOutBreakdown.cash += entry.amount;
@@ -262,8 +350,11 @@ export class FinanceReportService {
               cashOutBreakdown.fonePay += entry.amount;
               break;
             case "CHEQUE":
-              // Cheque is typically bank transfer
-              cashOutBreakdown.bankTransfer += entry.amount;
+              cashOutBreakdown.cheque += entry.amount;
+              break;
+            case "CREDIT":
+              // Credit expenses: include as cash out (accrual accounting - expense when incurred)
+              cashOutBreakdown.credit += entry.amount;
               break;
           }
         }
@@ -272,11 +363,15 @@ export class FinanceReportService {
       const cashIn =
         cashInBreakdown.cash +
         cashInBreakdown.bankTransfer +
-        cashInBreakdown.fonePay;
+        cashInBreakdown.fonePay +
+        cashInBreakdown.cheque +
+        cashInBreakdown.credit;
       const cashOut =
         cashOutBreakdown.cash +
         cashOutBreakdown.bankTransfer +
-        cashOutBreakdown.fonePay;
+        cashOutBreakdown.fonePay +
+        cashOutBreakdown.cheque +
+        cashOutBreakdown.credit;
 
       return {
         cashIn: cashIn || 0,
@@ -347,12 +442,18 @@ export class FinanceReportService {
       
       let cashFromLedger = 0;
       allEntries.forEach((entry) => {
+        // Exclude credit settlement entries (these are just collections, not new income)
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        
         // Skip SALES category as we've already counted from actual sales/orders
-        if (entry.type === "INCOME" && entry.category !== "SALES") {
+        // Also exclude credit settlements
+        if (entry.type === "INCOME" && entry.category !== "SALES" && !isCreditSettlement) {
           if (entry.paymentMethod === "CASH") {
             cashFromLedger += entry.amount;
           }
-        } else if (entry.type === "EXPENSE") {
+        } else if (entry.type === "EXPENSE" && entry.category !== "VENDOR_PAY") {
+          // Exclude VENDOR_PAY entries (these are just payments, not expenses)
           if (entry.paymentMethod === "CASH") {
             cashFromLedger -= entry.amount;
           }
@@ -533,30 +634,75 @@ export class FinanceReportService {
     endDate: Date
   ): Promise<ExpenseReport> {
     try {
-      const entries = await LedgerService.getEntries(
-        startDate,
-        endDate,
-        "EXPENSE"
+      // Get purchase orders and ledger entries
+      const [entries, purchaseOrders] = await Promise.all([
+        LedgerService.getEntries(startDate, endDate),
+        VendorService.getPurchaseOrdersByDateRange(startDate, endDate),
+      ]);
+
+      // Calculate expenses from actual purchase orders (received)
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+      const purchaseOrderExpenses = receivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
       );
 
-      const totalExpenses = entries.reduce(
+      // Filter ledger entries (excluding auto-generated entries, VENDOR_PAY, and credit settlements)
+      const validExpenseEntries = entries.filter((entry) => {
+        // Exclude auto-generated sales entries
+        if (entry.category === "SALES" && entry.relatedId) {
+          return false;
+        }
+        // Exclude auto-generated purchase order entries
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
+        return entry.type === "EXPENSE";
+      });
+      
+      const ledgerExpenses = validExpenseEntries.reduce(
         (sum, entry) => sum + entry.amount,
         0
       );
 
-      const expensesByCategory: Record<string, number> = {};
-      entries.forEach((entry) => {
+      // Total expenses = purchase order expenses + ledger expenses
+      const totalExpenses = purchaseOrderExpenses + ledgerExpenses;
+
+      const expensesByCategory: Record<string, number> = {
+        PURCHASE: purchaseOrderExpenses,
+      };
+      
+      validExpenseEntries.forEach((entry) => {
         expensesByCategory[entry.category] =
           (expensesByCategory[entry.category] || 0) + entry.amount;
       });
 
-      const topExpenses = entries
-        .map((entry) => ({
-          description: entry.description,
-          amount: entry.amount,
-          category: entry.category,
-          date: entry.date.toDate(),
-        }))
+      // Add purchase orders to top expenses
+      const poExpenses = receivedPOs.map((po) => ({
+        description: `Purchase Order #${po.id.substring(0, 8)}`,
+        amount: po.receivedTotalAmount ?? po.totalAmount,
+        category: "PURCHASE",
+        date: po.createdAt.toDate(),
+      }));
+
+      const ledgerExpenseList = validExpenseEntries.map((entry) => ({
+        description: entry.description,
+        amount: entry.amount,
+        category: entry.category,
+        date: entry.date.toDate(),
+      }));
+
+      const topExpenses = [...poExpenses, ...ledgerExpenseList]
         .sort((a, b) => b.amount - a.amount)
         .slice(0, 20);
 

@@ -152,20 +152,20 @@ export default function FinanceReportsPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-3xl font-bold text-green-600">
-                        Rs {reportData.income.toFixed(2)}
+                        Rs {(reportData.income ?? 0).toFixed(2)}
                       </div>
                       <div className="mt-4 space-y-2 text-sm">
                         <div className="flex justify-between">
                           <span>Sales:</span>
-                          <span>Rs {reportData.incomeBreakdown.sales.toFixed(2)}</span>
+                          <span>Rs {(reportData.incomeBreakdown?.sales ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Orders:</span>
-                          <span>Rs {reportData.incomeBreakdown.orders.toFixed(2)}</span>
+                          <span>Rs {(reportData.incomeBreakdown?.orders ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Other:</span>
-                          <span>Rs {reportData.incomeBreakdown.other.toFixed(2)}</span>
+                          <span>Rs {(reportData.incomeBreakdown?.other ?? 0).toFixed(2)}</span>
                         </div>
                       </div>
                     </CardContent>
@@ -177,32 +177,32 @@ export default function FinanceReportsPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-3xl font-bold text-red-600">
-                        Rs {reportData.expenses.toFixed(2)}
+                        Rs {(reportData.expenses ?? 0).toFixed(2)}
                       </div>
                       <div className="mt-4 space-y-2 text-sm">
                         <div className="flex justify-between">
                           <span>Purchases:</span>
-                          <span>Rs {reportData.expenseBreakdown.purchases.toFixed(2)}</span>
+                          <span>Rs {(reportData.expenseBreakdown?.purchases ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Vendor Payments:</span>
-                          <span>Rs {reportData.expenseBreakdown.vendorPayments.toFixed(2)}</span>
+                          <span>Rs {(reportData.expenseBreakdown?.vendorPayments ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Salaries:</span>
-                          <span>Rs {reportData.expenseBreakdown.salaries.toFixed(2)}</span>
+                          <span>Rs {(reportData.expenseBreakdown?.salaries ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Rent:</span>
-                          <span>Rs {reportData.expenseBreakdown.rent.toFixed(2)}</span>
+                          <span>Rs {(reportData.expenseBreakdown?.rent ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Utilities:</span>
-                          <span>Rs {reportData.expenseBreakdown.utilities.toFixed(2)}</span>
+                          <span>Rs {(reportData.expenseBreakdown?.utilities ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Other:</span>
-                          <span>Rs {reportData.expenseBreakdown.other.toFixed(2)}</span>
+                          <span>Rs {(reportData.expenseBreakdown?.other ?? 0).toFixed(2)}</span>
                         </div>
                       </div>
                     </CardContent>
@@ -213,8 +213,8 @@ export default function FinanceReportsPage() {
                       <CardTitle>Net Profit</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className={`text-3xl font-bold ${reportData.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
-                        Rs {reportData.netProfit.toFixed(2)}
+                      <div className={`text-3xl font-bold ${(reportData.netProfit ?? 0) >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        Rs {(reportData.netProfit ?? 0).toFixed(2)}
                       </div>
                       <div className="mt-2 text-sm text-gray-600">
                         {reportData.netProfit >= 0 ? (
@@ -257,6 +257,14 @@ export default function FinanceReportsPage() {
                           <span>FonePay:</span>
                           <span>Rs {(reportData.cashInBreakdown?.fonePay || 0).toFixed(2)}</span>
                         </div>
+                        <div className="flex justify-between">
+                          <span>Cheque:</span>
+                          <span>Rs {(reportData.cashInBreakdown?.cheque || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Credit:</span>
+                          <span>Rs {(reportData.cashInBreakdown?.credit || 0).toFixed(2)}</span>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -281,6 +289,14 @@ export default function FinanceReportsPage() {
                         <div className="flex justify-between">
                           <span>FonePay:</span>
                           <span>Rs {(reportData.cashOutBreakdown?.fonePay || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Cheque:</span>
+                          <span>Rs {(reportData.cashOutBreakdown?.cheque || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Credit:</span>
+                          <span>Rs {(reportData.cashOutBreakdown?.credit || 0).toFixed(2)}</span>
                         </div>
                       </div>
                     </CardContent>

@@ -18,11 +18,13 @@ import {
 import { LedgerService } from "@/lib/services/ledgerService";
 import { SaleService } from "@/lib/services/saleService";
 import { OrderService } from "@/lib/services/orderService";
-import { LedgerEntry, Sale, Order } from "@/lib/types";
+import { VendorService } from "@/lib/services/vendorService";
+import { LedgerEntry, Sale, Order, PurchaseOrder } from "@/lib/types";
 import { usePermissions } from "@/lib/hooks/usePermissions";
-import { DollarSign, TrendingUp, TrendingDown, FileText, BarChart3, Calendar } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, FileText, BarChart3, Calendar, Eye } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 import Link from "next/link";
+import { TransactionDetailsDialog } from "@/components/admin/TransactionDetailsDialog";
 
 type UnifiedTransaction = {
   id: string;
@@ -32,7 +34,8 @@ type UnifiedTransaction = {
   description: string;
   amount: number;
   paymentMethod: string;
-  source?: "LEDGER" | "POS" | "ONLINE";
+  source?: "LEDGER" | "POS" | "ONLINE" | "PURCHASE";
+  vendorId?: string; // For purchase orders
 };
 
 export default function FinancePage() {
@@ -44,6 +47,12 @@ export default function FinancePage() {
     // Default to today's date
     return new Date().toISOString().split("T")[0];
   });
+  const [selectedTransaction, setSelectedTransaction] = useState<{
+    id: string;
+    type: "SALE" | "ORDER" | "LEDGER" | "PURCHASE";
+    source?: "POS" | "ONLINE" | "LEDGER" | "PURCHASE";
+    vendorId?: string;
+  } | null>(null);
 
   useEffect(() => {
     fetchFinanceData();
@@ -58,14 +67,15 @@ export default function FinancePage() {
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
 
-      // Get actual sales and orders for accurate income calculation
-      const [dayEntries, sales, orders] = await Promise.all([
+      // Get actual sales, orders, and purchase orders for accurate calculation
+      const [dayEntries, sales, orders, purchaseOrders] = await Promise.all([
         LedgerService.getEntries(startOfDay, endOfDay),
         SaleService.getSales(startOfDay, endOfDay),
         OrderService.getAllOrders({
           startDate: startOfDay,
           endDate: endOfDay,
         }),
+        VendorService.getPurchaseOrdersByDateRange(startOfDay, endOfDay),
       ]);
 
       // Calculate income from actual sales and orders
@@ -78,33 +88,72 @@ export default function FinancePage() {
         0
       );
 
-      // Get expenses and other income from ledger (excluding auto-generated sales entries)
+      // Calculate expenses from actual purchase orders (received)
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+      const purchaseOrderExpenses = receivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
+      );
+
+      // Get expenses and other income from ledger (excluding auto-generated sales/PO entries, VENDOR_PAY, and credit settlements)
       const manualLedgerEntriesForPL = dayEntries.filter((entry) => {
         // Exclude auto-generated sales entries
         if (entry.category === "SALES" && entry.relatedId) {
           return false;
         }
+        // Exclude auto-generated purchase order entries
+        // These are created when GRN is processed, but we're using actual PO data for expenses
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries (these are just collections, not income)
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
         return true;
       });
       
-      const expenses = manualLedgerEntriesForPL
+      const ledgerExpenses = manualLedgerEntriesForPL
         .filter((e) => e.type === "EXPENSE")
         .reduce((sum, e) => sum + e.amount, 0);
       const otherIncome = manualLedgerEntriesForPL
         .filter((e) => e.type === "INCOME" && e.category !== "SALES")
         .reduce((sum, e) => sum + e.amount, 0);
 
+      // Total expenses = purchase order expenses + other ledger expenses
+      const expenses = purchaseOrderExpenses + ledgerExpenses;
       const totalIncome = posSalesRevenue + onlineOrdersRevenue + otherIncome;
       const netProfit = totalIncome - expenses;
 
-      // Filter out ledger entries that are auto-generated from sales/orders
-      // These entries are created automatically when sales/orders are made
-      // and we're already showing the actual sales/orders, so we don't need the ledger duplicates
+      // Filter out ledger entries that are auto-generated from sales/orders/purchase orders
+      // These entries are created automatically when sales/orders/POs are made
+      // and we're already showing the actual transactions, so we don't need the ledger duplicates
       const manualLedgerEntries = dayEntries.filter((entry) => {
         // Exclude entries that are related to sales/orders
         // These are auto-generated and we're already showing the actual sales/orders
         if (entry.category === "SALES" && entry.relatedId) {
           return false; // This is an auto-generated entry from a sale/order
+        }
+        // Exclude entries that are related to purchase orders
+        // These are auto-generated when GRN is processed and we're already showing the actual purchase orders
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false; // This is an auto-generated entry from a purchase order
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries (these are just collections, not income)
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
         }
         return true; // Include all other entries (expenses, manual income, etc.)
       });
@@ -152,6 +201,21 @@ export default function FinancePage() {
           paymentMethod: order.paymentMethod,
           source: "ONLINE",
         });
+      });
+
+      // Add purchase orders (received) as expenses
+      receivedPOs.forEach((po) => {
+        unifiedTransactions.push({
+          id: po.id,
+          date: po.createdAt,
+          type: "EXPENSE",
+          category: "PURCHASE",
+          description: `Purchase Order #${po.id.substring(0, 8)}`,
+          amount: po.receivedTotalAmount ?? po.totalAmount,
+          paymentMethod: "CREDIT", // Purchase orders are typically on credit
+          source: "PURCHASE",
+          vendorId: po.vendorId, // Store vendorId for navigation
+        } as UnifiedTransaction & { vendorId?: string });
       });
 
       // Sort by date descending (newest first)
@@ -319,6 +383,7 @@ export default function FinancePage() {
                         <TableHead>Source</TableHead>
                         <TableHead>Payment Method</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -355,6 +420,25 @@ export default function FinancePage() {
                           >
                             {transaction.type === "INCOME" ? "+" : "-"}Rs {transaction.amount.toFixed(2)}
                           </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const type = transaction.source === "POS" ? "SALE" : 
+                                            transaction.source === "ONLINE" ? "ORDER" : 
+                                            transaction.source === "PURCHASE" ? "PURCHASE" : "LEDGER";
+                                setSelectedTransaction({
+                                  id: transaction.id,
+                                  type,
+                                  source: transaction.source,
+                                  vendorId: transaction.vendorId,
+                                });
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -363,6 +447,19 @@ export default function FinancePage() {
               )}
             </CardContent>
           </Card>
+
+          {selectedTransaction && (
+            <TransactionDetailsDialog
+              transactionId={selectedTransaction.id}
+              transactionType={selectedTransaction.type}
+              source={selectedTransaction.source}
+              vendorId={selectedTransaction.vendorId}
+              open={!!selectedTransaction}
+              onOpenChange={(open) => {
+                if (!open) setSelectedTransaction(null);
+              }}
+            />
+          )}
         </div>
       </AdminLayout>
     </ProtectedRoute>

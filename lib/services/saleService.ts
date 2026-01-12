@@ -87,19 +87,34 @@ export class SaleService {
         );
       }
 
-      // Create ledger entry for paid amount only (not credit)
-      if (saleData.paidAmount > 0) {
-        await LedgerService.postSaleIncome(
-          saleRef.id,
-          saleData.paidAmount,
-          saleData.paymentMethod,
-          saleData.performedBy
-        );
-      }
+      // Create ledger entry for full sale total (accrual accounting principle)
+      // Record income when sale is made, regardless of payment method (cash or credit)
+      await LedgerService.postSaleIncome(
+        saleRef.id,
+        saleData.total, // Record full total, not just paidAmount
+        saleData.paymentMethod,
+        saleData.performedBy
+      );
 
       return saleRef.id;
     } catch (error) {
       console.error("Error creating sale:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a sale by ID
+   */
+  static async getSale(saleId: string): Promise<Sale | null> {
+    try {
+      const saleDoc = await getDoc(doc(db, "sales", saleId));
+      if (saleDoc.exists()) {
+        return { id: saleDoc.id, ...saleDoc.data() } as Sale;
+      }
+      return null;
+    } catch (error) {
+      console.error("Error fetching sale:", error);
       throw error;
     }
   }

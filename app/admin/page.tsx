@@ -70,12 +70,56 @@ export default function AdminDashboardPage() {
       );
       const onlineOrdersRevenue = confirmedOrders.reduce((sum, order) => sum + order.total, 0);
 
-      // Calculate total income from actual sales and orders (more accurate than ledger alone)
-      const totalIncome = posSalesRevenue + onlineOrdersRevenue;
 
-      // Get expenses from ledger
-      const pl = await LedgerService.getDailyPL(today);
-      const totalExpense = pl.expense;
+      // Get expenses using updated logic (purchase orders + ledger expenses)
+      const [entries, purchaseOrders] = await Promise.all([
+        LedgerService.getEntries(startOfDay, endOfDay),
+        VendorService.getPurchaseOrdersByDateRange(startOfDay, endOfDay),
+      ]);
+
+      // Calculate expenses from actual purchase orders (received)
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+      const purchaseOrderExpenses = receivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
+      );
+
+      // Get expenses from ledger (excluding auto-generated sales/PO entries, VENDOR_PAY, and credit settlements)
+      const manualLedgerEntriesForPL = entries.filter((entry) => {
+        // Exclude auto-generated sales entries
+        if (entry.category === "SALES" && entry.relatedId) {
+          return false;
+        }
+        // Exclude auto-generated purchase order entries
+        // These are created when GRN is processed, but we're using actual PO data for expenses
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries (these are just collections, not income)
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
+        return true;
+      });
+      
+      const ledgerExpenses = manualLedgerEntriesForPL
+        .filter((e) => e.type === "EXPENSE")
+        .reduce((sum, e) => sum + e.amount, 0);
+      const otherIncome = manualLedgerEntriesForPL
+        .filter((e) => e.type === "INCOME" && e.category !== "SALES")
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      // Total expenses = purchase order expenses + other ledger expenses
+      const totalExpense = purchaseOrderExpenses + ledgerExpenses;
+      
+      // Calculate total income from actual sales, orders, and other income
+      const totalIncome = posSalesRevenue + onlineOrdersRevenue + otherIncome;
 
       // Pending orders (all time, but we'll show today's pending)
       const pendingOrders = todayOrders.filter((o) => o.status === "PENDING");

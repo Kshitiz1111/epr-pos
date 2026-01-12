@@ -102,12 +102,12 @@ export default function LoginPage() {
         if (userDoc.exists()) {
           const userData = userDoc.data();
           const role = userData.role as UserRole;
-          
+          console.log('userData',userData);
           // Redirect based on role
           if (role === "admin") {
             router.push("/admin");
           } else if (role === "staff" || role === "manager") {
-            router.push("/pos");
+            router.push("/admin/hr/attendance");
           } else {
             // Default to admin for unknown roles
             router.push("/admin");

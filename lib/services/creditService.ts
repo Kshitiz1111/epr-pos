@@ -125,17 +125,10 @@ export class CreditService {
         });
       }
 
-      // Create ledger entry for the settlement (income)
-      await LedgerService.createEntry({
-        date: Timestamp.now(),
-        type: "INCOME",
-        category: "SALES",
-        amount,
-        description: `Credit settlement for sale #${credit.saleId}${notes ? ` - ${notes}` : ""}`,
-        relatedId: credit.saleId,
-        paymentMethod: "CASH", // Default, can be made configurable
-        performedBy: settledBy,
-      });
+      // Note: We do NOT create a ledger income entry here because:
+      // - The income was already recorded when the sale was made (full total amount)
+      // - This settlement is just reducing Accounts Receivable (customer credit)
+      // - Following accrual accounting: income recorded when sale made, not when collected
     } catch (error) {
       console.error("Error settling credit:", error);
       throw error;

@@ -31,6 +31,7 @@ const adminPermissions: EmployeePermissions = {
     reports: { view: true, create: true, update: true, delete: true },
     orders: { view: true, create: true, update: true, delete: true },
     settings: { view: true, create: true, update: true, delete: true },
+    hr: { view: true, create: true, update: true, delete: true },
   },
 };
 

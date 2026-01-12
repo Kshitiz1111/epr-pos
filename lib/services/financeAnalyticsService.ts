@@ -2,6 +2,7 @@
 import { LedgerService } from "./ledgerService";
 import { SaleService } from "./saleService";
 import { OrderService } from "./orderService";
+import { VendorService } from "./vendorService";
 import { ProductService } from "./productService";
 import { CustomerService } from "./customerService";
 
@@ -70,21 +71,59 @@ export class FinanceAnalyticsService {
         startDate,
         endDate,
       });
-      const confirmedOrders = orders.filter((o) => o.status === "CONFIRMED");
-      const ordersRevenue = confirmedOrders.reduce(
+      const confirmedOrCompletedOrders = orders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
+      );
+      const ordersRevenue = confirmedOrCompletedOrders.reduce(
         (sum, order) => sum + order.total,
         0
       );
 
       const revenue = salesRevenue + ordersRevenue;
 
-      // Get expenses
-      const entries = await LedgerService.getEntries(
-        startDate,
-        endDate,
-        "EXPENSE"
+      // Get purchase orders and ledger entries
+      const [entries, purchaseOrders] = await Promise.all([
+        LedgerService.getEntries(startDate, endDate),
+        VendorService.getPurchaseOrdersByDateRange(startDate, endDate),
+      ]);
+
+      // Calculate expenses from actual purchase orders (received)
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+      const purchaseOrderExpenses = receivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
       );
-      const expenses = entries.reduce((sum, entry) => sum + entry.amount, 0);
+
+      // Filter ledger entries (excluding auto-generated entries, VENDOR_PAY, and credit settlements)
+      const validExpenseEntries = entries.filter((entry) => {
+        // Exclude auto-generated sales entries
+        if (entry.category === "SALES" && entry.relatedId) {
+          return false;
+        }
+        // Exclude auto-generated purchase order entries
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
+        return entry.type === "EXPENSE";
+      });
+
+      const ledgerExpenses = validExpenseEntries.reduce(
+        (sum, entry) => sum + entry.amount,
+        0
+      );
+
+      // Total expenses = purchase order expenses + ledger expenses
+      const expenses = purchaseOrderExpenses + ledgerExpenses;
 
       // Estimate COGS (Cost of Goods Sold) - would need product cost prices
       // For now, estimate as 60% of revenue (typical retail margin)
@@ -119,9 +158,39 @@ export class FinanceAnalyticsService {
         startDate,
         endDate,
       });
-      const confirmedOrders = orders.filter((o) => o.status === "CONFIRMED");
+      const confirmedOrCompletedOrders = orders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
+      );
 
-      const entries = await LedgerService.getEntries(startDate, endDate);
+      // Get purchase orders and ledger entries
+      const [entries, purchaseOrders] = await Promise.all([
+        LedgerService.getEntries(startDate, endDate),
+        VendorService.getPurchaseOrdersByDateRange(startDate, endDate),
+      ]);
+      const receivedPOs = purchaseOrders.filter((po) => po.status === "RECEIVED");
+
+      // Filter ledger entries (excluding auto-generated entries, VENDOR_PAY, and credit settlements)
+      const validEntries = entries.filter((entry) => {
+        // Exclude auto-generated sales entries
+        if (entry.category === "SALES" && entry.relatedId) {
+          return false;
+        }
+        // Exclude auto-generated purchase order entries
+        if (entry.category === "PURCHASE" && entry.relatedId) {
+          return false;
+        }
+        // Exclude VENDOR_PAY entries (these are just payments, not expenses)
+        if (entry.category === "VENDOR_PAY") {
+          return false;
+        }
+        // Exclude credit settlement entries
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) {
+          return false;
+        }
+        return true;
+      });
 
       // Group by period
       const trendMap = new Map<string, { revenue: number; expenses: number }>();
@@ -135,15 +204,23 @@ export class FinanceAnalyticsService {
       });
 
       // Process orders
-      confirmedOrders.forEach((order) => {
+      confirmedOrCompletedOrders.forEach((order) => {
         const dateKey = this.getDateKey(order.createdAt.toDate(), period);
         const existing = trendMap.get(dateKey) || { revenue: 0, expenses: 0 };
         existing.revenue += order.total;
         trendMap.set(dateKey, existing);
       });
 
-      // Process expenses
-      entries
+      // Process purchase order expenses
+      receivedPOs.forEach((po) => {
+        const dateKey = this.getDateKey(po.createdAt.toDate(), period);
+        const existing = trendMap.get(dateKey) || { revenue: 0, expenses: 0 };
+        existing.expenses += po.receivedTotalAmount ?? po.totalAmount;
+        trendMap.set(dateKey, existing);
+      });
+
+      // Process ledger expenses
+      validEntries
         .filter((e) => e.type === "EXPENSE")
         .forEach((entry) => {
           const dateKey = this.getDateKey(entry.date.toDate(), period);
@@ -309,21 +386,41 @@ export class FinanceAnalyticsService {
         startDate: currentStart,
         endDate: currentEnd,
       });
-      const currentConfirmedOrders = currentOrders.filter(
-        (o) => o.status === "CONFIRMED"
+      const currentConfirmedOrCompletedOrders = currentOrders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
       );
       const currentRevenue =
         currentSales.reduce((sum, s) => sum + s.total, 0) +
-        currentConfirmedOrders.reduce((sum, o) => sum + o.total, 0);
-      const currentEntries = await LedgerService.getEntries(
-        currentStart,
-        currentEnd,
-        "EXPENSE"
+        currentConfirmedOrCompletedOrders.reduce((sum, o) => sum + o.total, 0);
+      
+      // Get current period purchase orders and ledger entries
+      const [currentEntries, currentPOs] = await Promise.all([
+        LedgerService.getEntries(currentStart, currentEnd),
+        VendorService.getPurchaseOrdersByDateRange(currentStart, currentEnd),
+      ]);
+      
+      // Calculate current expenses
+      const currentReceivedPOs = currentPOs.filter((po) => po.status === "RECEIVED");
+      const currentPOExpenses = currentReceivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
       );
-      const currentExpenses = currentEntries.reduce(
+      
+      const currentValidEntries = currentEntries.filter((entry) => {
+        if (entry.category === "SALES" && entry.relatedId) return false;
+        if (entry.category === "PURCHASE" && entry.relatedId) return false;
+        if (entry.category === "VENDOR_PAY") return false;
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) return false;
+        return entry.type === "EXPENSE";
+      });
+      
+      const currentLedgerExpenses = currentValidEntries.reduce(
         (sum, e) => sum + e.amount,
         0
       );
+      const currentExpenses = currentPOExpenses + currentLedgerExpenses;
       const currentProfit = currentRevenue - currentExpenses;
 
       // Previous period
@@ -335,21 +432,41 @@ export class FinanceAnalyticsService {
         startDate: previousStart,
         endDate: previousEnd,
       });
-      const previousConfirmedOrders = previousOrders.filter(
-        (o) => o.status === "CONFIRMED"
+      const previousConfirmedOrCompletedOrders = previousOrders.filter(
+        (o) => o.status === "CONFIRMED" || o.status === "COMPLETED"
       );
       const previousRevenue =
         previousSales.reduce((sum, s) => sum + s.total, 0) +
-        previousConfirmedOrders.reduce((sum, o) => sum + o.total, 0);
-      const previousEntries = await LedgerService.getEntries(
-        previousStart,
-        previousEnd,
-        "EXPENSE"
+        previousConfirmedOrCompletedOrders.reduce((sum, o) => sum + o.total, 0);
+      
+      // Get previous period purchase orders and ledger entries
+      const [previousEntries, previousPOs] = await Promise.all([
+        LedgerService.getEntries(previousStart, previousEnd),
+        VendorService.getPurchaseOrdersByDateRange(previousStart, previousEnd),
+      ]);
+      
+      // Calculate previous expenses
+      const previousReceivedPOs = previousPOs.filter((po) => po.status === "RECEIVED");
+      const previousPOExpenses = previousReceivedPOs.reduce(
+        (sum, po) => sum + (po.receivedTotalAmount ?? po.totalAmount),
+        0
       );
-      const previousExpenses = previousEntries.reduce(
+      
+      const previousValidEntries = previousEntries.filter((entry) => {
+        if (entry.category === "SALES" && entry.relatedId) return false;
+        if (entry.category === "PURCHASE" && entry.relatedId) return false;
+        if (entry.category === "VENDOR_PAY") return false;
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        if (isCreditSettlement) return false;
+        return entry.type === "EXPENSE";
+      });
+      
+      const previousLedgerExpenses = previousValidEntries.reduce(
         (sum, e) => sum + e.amount,
         0
       );
+      const previousExpenses = previousPOExpenses + previousLedgerExpenses;
       const previousProfit = previousRevenue - previousExpenses;
 
       return {

@@ -22,6 +22,7 @@ const resourceLabels: Record<ResourceName, string> = {
   pos: "Point of Sale",
   reports: "Reports",
   orders: "Orders",
+  hr: "HR",
   settings: "Settings",
 };
 
@@ -44,6 +45,7 @@ const allResources: ResourceName[] = [
   "pos",
   "reports",
   "orders",
+  "hr",
   "settings",
 ];
 
@@ -74,6 +76,7 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
         pos: { view: false, create: false, update: false, delete: false },
         reports: { view: false, create: false, update: false, delete: false },
         orders: { view: false, create: false, update: false, delete: false },
+        hr: { view: false, create: false, update: false, delete: false },
         settings: { view: false, create: false, update: false, delete: false },
       },
     };

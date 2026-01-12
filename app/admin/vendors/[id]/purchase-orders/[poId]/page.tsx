@@ -41,7 +41,7 @@ export default function PurchaseOrderDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [showGRNForm, setShowGRNForm] = useState(false);
   const [grnData, setGrnData] = useState<
-    Record<string, { receivedQuantity: string; warehouseId: string }>
+    Record<string, { receivedQuantity: string; receivedUnitPrice: string; warehouseId: string }>
   >({});
   const [billImageFile, setBillImageFile] = useState<File | null>(null);
   const [billImagePreview, setBillImagePreview] = useState<string | null>(null);
@@ -66,10 +66,11 @@ export default function PurchaseOrderDetailPage() {
         setVendor(vendorData);
 
         // Initialize GRN data
-        const initialGrnData: Record<string, { receivedQuantity: string; warehouseId: string }> = {};
+        const initialGrnData: Record<string, { receivedQuantity: string; receivedUnitPrice: string; warehouseId: string }> = {};
         po.items.forEach((item) => {
           initialGrnData[item.productId] = {
             receivedQuantity: item.quantity.toString(),
+            receivedUnitPrice: item.unitPrice.toString(),
             warehouseId: "",
           };
         });
@@ -116,22 +117,25 @@ export default function PurchaseOrderDetailPage() {
     const receivedItems: Array<{
       productId: string;
       receivedQuantity: number;
+      receivedUnitPrice: number;
       warehouseId: string;
     }> = [];
 
     for (const [productId, data] of Object.entries(grnData)) {
-      const quantity = parseInt(data.receivedQuantity) || 0;
-      if (quantity > 0 && data.warehouseId) {
+      const quantity = parseFloat(data.receivedQuantity) || 0;
+      const unitPrice = parseFloat(data.receivedUnitPrice) || 0;
+      if (quantity > 0 && data.warehouseId && unitPrice > 0) {
         receivedItems.push({
           productId,
           receivedQuantity: quantity,
+          receivedUnitPrice: unitPrice,
           warehouseId: data.warehouseId,
         });
       }
     }
 
     if (receivedItems.length === 0) {
-      setError("Please specify received quantities and warehouses for at least one item");
+      setError("Please specify received quantities, unit prices, and warehouses for at least one item");
       return;
     }
 
@@ -297,9 +301,29 @@ export default function PurchaseOrderDetailPage() {
               </CardHeader>
               <CardContent>
                 <div>
-                  <p className="text-sm text-gray-600">Total Amount</p>
+                  <p className="text-sm text-gray-600">Ordered Total Amount</p>
                   <p className="text-2xl font-bold">Rs {purchaseOrder.totalAmount.toFixed(2)}</p>
                 </div>
+                {purchaseOrder.status === "RECEIVED" && purchaseOrder.receivedTotalAmount !== undefined && (
+                  <div className="mt-4">
+                    <p className="text-sm text-gray-600">Received Total Amount</p>
+                    {purchaseOrder.receivedTotalAmount !== purchaseOrder.totalAmount ? (
+                      <div>
+                        <p className="text-gray-400 line-through text-lg">
+                          Rs {purchaseOrder.totalAmount.toFixed(2)}
+                        </p>
+                        <p className="text-2xl font-bold text-green-600">
+                          Rs {purchaseOrder.receivedTotalAmount.toFixed(2)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Difference: Rs {Math.abs(purchaseOrder.receivedTotalAmount - purchaseOrder.totalAmount).toFixed(2)}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-2xl font-bold">Rs {purchaseOrder.receivedTotalAmount.toFixed(2)}</p>
+                    )}
+                  </div>
+                )}
                 <div className="mt-4">
                   <p className="text-sm text-gray-600">Items Count</p>
                   <p className="text-lg font-medium">{purchaseOrder.items.length} items</p>
@@ -319,10 +343,16 @@ export default function PurchaseOrderDetailPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      <TableHead>Unit Price</TableHead>
-                      <TableHead>Total</TableHead>
-                      {purchaseOrder.status === "RECEIVED" && <TableHead>Received</TableHead>}
+                      <TableHead>Ordered Qty</TableHead>
+                      <TableHead>Ordered Unit Price</TableHead>
+                      <TableHead>Ordered Total</TableHead>
+                      {purchaseOrder.status === "RECEIVED" && (
+                        <>
+                          <TableHead>Received Qty</TableHead>
+                          <TableHead>Received Unit Price</TableHead>
+                          <TableHead>Received Total</TableHead>
+                        </>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -335,7 +365,47 @@ export default function PurchaseOrderDetailPage() {
                           Rs {(item.quantity * item.unitPrice).toFixed(2)}
                         </TableCell>
                         {purchaseOrder.status === "RECEIVED" && (
-                          <TableCell>{item.receivedQuantity || item.quantity}</TableCell>
+                          <>
+                            <TableCell>{item.receivedQuantity || item.quantity}</TableCell>
+                            <TableCell>
+                              {item.receivedUnitPrice !== undefined ? (
+                                item.receivedUnitPrice !== item.unitPrice ? (
+                                  <span>
+                                    <span className="text-gray-400 line-through mr-2">
+                                      Rs {item.unitPrice.toFixed(2)}
+                                    </span>
+                                    <span className="font-semibold text-green-600">
+                                      Rs {item.receivedUnitPrice.toFixed(2)}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span>Rs {item.receivedUnitPrice.toFixed(2)}</span>
+                                )
+                              ) : (
+                                <span className="text-gray-400">Rs {item.unitPrice.toFixed(2)}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              {item.receivedQuantity && item.receivedUnitPrice !== undefined ? (
+                                item.receivedQuantity * item.receivedUnitPrice !== item.quantity * item.unitPrice ? (
+                                  <span>
+                                    <span className="text-gray-400 line-through mr-2">
+                                      Rs {(item.quantity * item.unitPrice).toFixed(2)}
+                                    </span>
+                                    <span className="font-semibold text-green-600">
+                                      Rs {(item.receivedQuantity * item.receivedUnitPrice).toFixed(2)}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span>Rs {(item.receivedQuantity * item.receivedUnitPrice).toFixed(2)}</span>
+                                )
+                              ) : (
+                                <span className="text-gray-400">
+                                  Rs {(item.quantity * item.unitPrice).toFixed(2)}
+                                </span>
+                              )}
+                            </TableCell>
+                          </>
                         )}
                       </TableRow>
                     ))}
@@ -360,7 +430,9 @@ export default function PurchaseOrderDetailPage() {
                       <TableRow>
                         <TableHead>Product</TableHead>
                         <TableHead>Ordered Qty</TableHead>
+                        <TableHead>Ordered Unit Price</TableHead>
                         <TableHead>Received Qty</TableHead>
+                        <TableHead>Received Unit Price</TableHead>
                         <TableHead>Warehouse</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -369,6 +441,9 @@ export default function PurchaseOrderDetailPage() {
                         <TableRow key={item.productId}>
                           <TableCell className="font-medium">{item.productName}</TableCell>
                           <TableCell>{item.quantity}</TableCell>
+                          <TableCell className="text-gray-600">
+                            Rs {item.unitPrice.toFixed(2)}
+                          </TableCell>
                           <TableCell>
                             <Input
                               type="number"
@@ -381,11 +456,32 @@ export default function PurchaseOrderDetailPage() {
                                   [item.productId]: {
                                     ...grnData[item.productId],
                                     receivedQuantity: e.target.value,
+                                    receivedUnitPrice: grnData[item.productId]?.receivedUnitPrice || item.unitPrice.toString(),
                                     warehouseId: grnData[item.productId]?.warehouseId || "",
                                   },
                                 })
                               }
                               className="w-24"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={grnData[item.productId]?.receivedUnitPrice || item.unitPrice.toString()}
+                              onChange={(e) =>
+                                setGrnData({
+                                  ...grnData,
+                                  [item.productId]: {
+                                    ...grnData[item.productId],
+                                    receivedQuantity: grnData[item.productId]?.receivedQuantity || "",
+                                    receivedUnitPrice: e.target.value,
+                                    warehouseId: grnData[item.productId]?.warehouseId || "",
+                                  },
+                                })
+                              }
+                              className="w-32"
                             />
                           </TableCell>
                           <TableCell>
@@ -397,6 +493,7 @@ export default function PurchaseOrderDetailPage() {
                                   [item.productId]: {
                                     ...grnData[item.productId],
                                     receivedQuantity: grnData[item.productId]?.receivedQuantity || "",
+                                    receivedUnitPrice: grnData[item.productId]?.receivedUnitPrice || item.unitPrice.toString(),
                                     warehouseId: value,
                                   },
                                 })

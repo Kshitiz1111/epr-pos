@@ -25,8 +25,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { doc, getDoc, collection, query, where, getDocs, orderBy, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ArrowLeft, DollarSign } from "lucide-react";
+import { ArrowLeft, DollarSign, Eye } from "lucide-react";
 import Link from "next/link";
+import { TransactionDetailsDialog } from "@/components/admin/TransactionDetailsDialog";
 
 export default function CustomerDetailPage() {
   const params = useParams();
@@ -57,6 +58,11 @@ export default function CustomerDetailPage() {
     email: "",
     address: "",
   });
+  const [selectedTransaction, setSelectedTransaction] = useState<{
+    id: string;
+    type: "SALE" | "ORDER" | "LEDGER";
+    source?: "POS" | "ONLINE" | "LEDGER";
+  } | null>(null);
 
   useEffect(() => {
     if (customerId) {
@@ -663,6 +669,7 @@ export default function CustomerDetailPage() {
                         <TableHead>Total</TableHead>
                         <TableHead>Payment Method</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -688,6 +695,21 @@ export default function CustomerDetailPage() {
                             ) : (
                               <span className="text-green-600 font-medium">Paid</span>
                             )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedTransaction({
+                                  id: sale.id,
+                                  type: "SALE",
+                                  source: sale.source || "POS",
+                                });
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -727,6 +749,21 @@ export default function CustomerDetailPage() {
                             >
                               {order.status}
                             </span>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedTransaction({
+                                  id: order.id,
+                                  type: "ORDER",
+                                  source: order.source || "ONLINE",
+                                });
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -809,6 +846,18 @@ export default function CustomerDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {selectedTransaction && (
+            <TransactionDetailsDialog
+              transactionId={selectedTransaction.id}
+              transactionType={selectedTransaction.type}
+              source={selectedTransaction.source}
+              open={!!selectedTransaction}
+              onOpenChange={(open) => {
+                if (!open) setSelectedTransaction(null);
+              }}
+            />
+          )}
         </div>
       </AdminLayout>
     </ProtectedRoute>

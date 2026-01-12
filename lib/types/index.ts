@@ -24,6 +24,7 @@ export type EmployeePermissions = {
     pos: ResourcePermission;
     reports: ResourcePermission;
     orders: ResourcePermission;
+    hr: ResourcePermission;
     settings: ResourcePermission;
   };
 };
@@ -228,6 +229,7 @@ export type PurchaseOrderItem = {
   quantity: number;
   unitPrice: number;
   receivedQuantity?: number;
+  receivedUnitPrice?: number; // Actual unit price when received (may differ from unitPrice)
 };
 
 export type PurchaseOrder = {
@@ -235,6 +237,7 @@ export type PurchaseOrder = {
   vendorId: string;
   items: PurchaseOrderItem[];
   totalAmount: number;
+  receivedTotalAmount?: number; // Actual total amount when received (calculated from received prices)
   status: PurchaseOrderStatus;
   createdBy: string;
   createdAt: Timestamp;

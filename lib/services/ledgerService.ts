@@ -117,9 +117,14 @@ export class LedgerService {
 
       querySnapshot.forEach((doc) => {
         const entry = doc.data() as LedgerEntry;
-        if (entry.type === "INCOME") {
+        // Exclude credit settlement entries (these are just collections, not new income)
+        const isCreditSettlement = entry.category === "SALES" && 
+          entry.description?.toLowerCase().includes("credit settlement");
+        
+        if (entry.type === "INCOME" && !isCreditSettlement) {
           income += entry.amount;
-        } else if (entry.type === "EXPENSE") {
+        } else if (entry.type === "EXPENSE" && entry.category !== "VENDOR_PAY") {
+          // Exclude VENDOR_PAY entries (these are just payments, not expenses)
           expense += entry.amount;
         }
       });

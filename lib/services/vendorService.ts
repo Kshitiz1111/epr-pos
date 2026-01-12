@@ -8,6 +8,7 @@ import {
   getDoc,
   getDocs,
   query,
+  where,
   orderBy,
   Timestamp,
 } from "firebase/firestore";
@@ -121,7 +122,7 @@ export class VendorService {
    */
   static async processGRN(
     poId: string,
-    receivedItems: Array<{ productId: string; receivedQuantity: number; warehouseId: string }>,
+    receivedItems: Array<{ productId: string; receivedQuantity: number; receivedUnitPrice: number; warehouseId: string }>,
     receivedBy: string,
     billImageUrl?: string
   ): Promise<void> {
@@ -133,18 +134,32 @@ export class VendorService {
 
       const po = { id: poDoc.id, ...poDoc.data() } as PurchaseOrder;
 
+      // Calculate received total amount based on received prices
+      let receivedTotalAmount = 0;
+      const updatedItems = po.items.map((item) => {
+        const received = receivedItems.find((ri) => ri.productId === item.productId);
+        if (received) {
+          const itemTotal = received.receivedQuantity * received.receivedUnitPrice;
+          receivedTotalAmount += itemTotal;
+          return {
+            ...item,
+            receivedQuantity: received.receivedQuantity,
+            receivedUnitPrice: received.receivedUnitPrice,
+          };
+        }
+        return {
+          ...item,
+          receivedQuantity: 0,
+        };
+      });
+
       // Update purchase order status
       const updateData: any = {
         status: "RECEIVED",
         receivedAt: Timestamp.now(),
         receivedBy,
-        items: po.items.map((item) => {
-          const received = receivedItems.find((ri) => ri.productId === item.productId);
-          return {
-            ...item,
-            receivedQuantity: received?.receivedQuantity || 0,
-          };
-        }),
+        items: updatedItems,
+        receivedTotalAmount,
       };
       if (billImageUrl) {
         updateData.billImageUrl = billImageUrl;
@@ -168,13 +183,22 @@ export class VendorService {
         }
       }
 
-      // Update vendor balance (Accounts Payable)
+      // Update vendor balance (Accounts Payable) using received total amount
       const vendor = await this.getVendor(po.vendorId);
       if (vendor) {
         await this.updateVendor(po.vendorId, {
-          balance: vendor.balance + po.totalAmount,
+          balance: vendor.balance + receivedTotalAmount,
         });
       }
+
+      // Create ledger entry for the purchase expense using received amount
+      const { LedgerService } = await import("@/lib/services/ledgerService");
+      await LedgerService.postPurchaseExpense(
+        poId,
+        receivedTotalAmount,
+        "CREDIT", // Purchase orders are typically on credit
+        receivedBy
+      );
     } catch (error) {
       console.error("Error processing GRN:", error);
       throw error;
@@ -195,6 +219,81 @@ export class VendorService {
       return orders;
     } catch (error) {
       console.error("Error fetching purchase orders:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get purchase orders by date range
+   */
+  static async getPurchaseOrdersByDateRange(startDate: Date, endDate: Date): Promise<PurchaseOrder[]> {
+    try {
+      const startTimestamp = Timestamp.fromDate(startDate);
+      const endTimestamp = Timestamp.fromDate(endDate);
+      
+      const q = query(
+        collection(db, "purchase_orders"),
+        where("createdAt", ">=", startTimestamp),
+        where("createdAt", "<=", endTimestamp),
+        orderBy("createdAt", "desc")
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const orders: PurchaseOrder[] = [];
+      querySnapshot.forEach((doc) => {
+        orders.push({ id: doc.id, ...doc.data() } as PurchaseOrder);
+      });
+      return orders;
+    } catch (error) {
+      console.error("Error fetching purchase orders by date range:", error);
+      // Fallback: fetch all and filter in memory
+      try {
+        const allOrders = await this.getAllPurchaseOrders();
+        return allOrders.filter((po) => {
+          const poDate = po.createdAt.toDate();
+          return poDate >= startDate && poDate <= endDate;
+        });
+      } catch (fallbackError) {
+        console.error("Error in fallback purchase order fetch:", fallbackError);
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Get purchase order by ID
+   */
+  static async getPurchaseOrder(poId: string): Promise<PurchaseOrder | null> {
+    try {
+      const poDoc = await getDoc(doc(db, "purchase_orders", poId));
+      if (poDoc.exists()) {
+        return { id: poDoc.id, ...poDoc.data() } as PurchaseOrder;
+      }
+      return null;
+    } catch (error) {
+      console.error("Error fetching purchase order:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get purchase orders containing a specific product
+   */
+  static async getPurchaseOrdersByProduct(productId: string): Promise<PurchaseOrder[]> {
+    try {
+      const q = query(collection(db, "purchase_orders"), orderBy("createdAt", "desc"));
+      const querySnapshot = await getDocs(q);
+      const orders: PurchaseOrder[] = [];
+      querySnapshot.forEach((doc) => {
+        const po = { id: doc.id, ...doc.data() } as PurchaseOrder;
+        // Filter to only include POs that contain this product
+        if (po.items.some((item) => item.productId === productId)) {
+          orders.push(po);
+        }
+      });
+      return orders;
+    } catch (error) {
+      console.error("Error fetching purchase orders by product:", error);
       throw error;
     }
   }
@@ -246,14 +345,10 @@ export class VendorService {
 
       await addDoc(collection(db, "vendors", vendorId, "payments"), paymentData);
 
-      // Create ledger entry
-      await LedgerService.createExpense(
-        "VENDOR_PAY",
-        amount,
-        `Payment to ${vendor.companyName}${notes ? ` - ${notes}` : ""}`,
-        paymentMethod,
-        performedBy
-      );
+      // Note: We do NOT create a ledger expense entry here because:
+      // - The expense was already recorded when GRN was processed (PURCHASE category)
+      // - This payment is just reducing Accounts Payable (vendor balance)
+      // - Following accrual accounting: expense recorded when goods received, not when paid
     } catch (error) {
       console.error("Error settling vendor payment:", error);
       throw error;

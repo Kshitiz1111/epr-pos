@@ -15,10 +15,11 @@ import { Product, Warehouse } from "@/lib/types";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ArrowLeft, Edit, Trash2, Save, X, QrCode, Download, Printer } from "lucide-react";
+import { ArrowLeft, Edit, Trash2, Save, X, QrCode, Download, Printer, Package } from "lucide-react";
 import QRCode from "react-qr-code";
 import { parseQRData } from "@/lib/utils/qrCode";
 import Link from "next/link";
+import { ProductPOHistoryDialog } from "@/components/admin/ProductPOHistoryDialog";
 
 export default function ProductDetailPage() {
   const params = useParams();
@@ -34,6 +35,7 @@ export default function ProductDetailPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [showPOHistory, setShowPOHistory] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -240,8 +242,13 @@ export default function ProductDetailPage() {
               <h1 className="text-3xl font-bold">{product.name}</h1>
               <p className="text-gray-600 mt-1">Product Details</p>
             </div>
+
             {!editing && (
               <div className="flex gap-2">
+                <Button onClick={() => setShowPOHistory(true)} variant="outline">
+                  <Package className="mr-2 h-4 w-4" />
+                  PO History
+                </Button>
                 {hasPermission("inventory", "update") && (
                   <Button onClick={() => setEditing(true)} variant="outline">
                     <Edit className="mr-2 h-4 w-4" />
@@ -258,6 +265,10 @@ export default function ProductDetailPage() {
             )}
             {editing && (
               <div className="flex gap-2">
+                <Button onClick={() => setShowPOHistory(true)} variant="outline">
+                  <Package className="mr-2 h-4 w-4" />
+                  PO History
+                </Button>
                 <Button onClick={handleSave} disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
                   {saving ? "Saving..." : "Save"}
@@ -655,6 +666,15 @@ ${ESCPOSCommands.cut()}
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {product && (
+            <ProductPOHistoryDialog
+              productId={product.id}
+              productName={product.name}
+              open={showPOHistory}
+              onOpenChange={setShowPOHistory}
+            />
           )}
         </div>
       </AdminLayout>

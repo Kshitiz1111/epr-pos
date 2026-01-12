@@ -21,6 +21,7 @@ import {
   LogOut,
   User as UserIcon,
   ShoppingBag,
+  Clock,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { OrderService } from "@/lib/services/orderService";
@@ -95,6 +96,12 @@ const navItems: NavItem[] = [
     href: "/admin/orders",
     icon: ShoppingBag,
     permission: { resource: "orders", action: "view" },
+  },
+  {
+    title: "Attendance",
+    href: "/admin/hr/attendance",
+    icon: Clock,
+    permission: { resource: "hr", action: "view" },
   },
   {
     title: "Settings",

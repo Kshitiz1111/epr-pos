@@ -22,7 +22,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { DollarSign } from "lucide-react";
+import { DollarSign, Eye } from "lucide-react";
+import { TransactionDetailsDialog } from "@/components/admin/TransactionDetailsDialog";
 
 export default function CustomerCreditsPage() {
   const { user } = useAuth();
@@ -34,6 +35,11 @@ export default function CustomerCreditsPage() {
   const [settlementAmount, setSettlementAmount] = useState("");
   const [settlementNotes, setSettlementNotes] = useState("");
   const [settlementPaymentMethod, setSettlementPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [selectedTransaction, setSelectedTransaction] = useState<{
+    id: string;
+    type: "SALE" | "ORDER" | "LEDGER";
+    source?: "POS" | "ONLINE" | "LEDGER";
+  } | null>(null);
 
   useEffect(() => {
     fetchCredits();
@@ -151,19 +157,35 @@ export default function CustomerCreditsPage() {
                             {credit.createdAt.toDate().toLocaleDateString()}
                           </TableCell>
                           <TableCell className="text-right">
-                            {hasPermission("customers", "settleCredits") && (
+                            <div className="flex items-center justify-end gap-2">
                               <Button
-                                variant="outline"
+                                variant="ghost"
                                 size="sm"
                                 onClick={() => {
-                                  setSelectedCredit(credit);
-                                  setSettlementAmount(credit.dueAmount.toString());
+                                  setSelectedTransaction({
+                                    id: credit.saleId,
+                                    type: "SALE",
+                                    source: "POS",
+                                  });
                                 }}
+                                title="View Sale Details"
                               >
-                                <DollarSign className="mr-2 h-4 w-4" />
-                                Settle
+                                <Eye className="h-4 w-4" />
                               </Button>
-                            )}
+                              {hasPermission("customers", "settleCredits") && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedCredit(credit);
+                                    setSettlementAmount(credit.dueAmount.toString());
+                                  }}
+                                >
+                                  <DollarSign className="mr-2 h-4 w-4" />
+                                  Settle
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -259,6 +281,18 @@ export default function CustomerCreditsPage() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {selectedTransaction && (
+          <TransactionDetailsDialog
+            transactionId={selectedTransaction.id}
+            transactionType={selectedTransaction.type}
+            source={selectedTransaction.source}
+            open={!!selectedTransaction}
+            onOpenChange={(open) => {
+              if (!open) setSelectedTransaction(null);
+            }}
+          />
         )}
       </AdminLayout>
     </ProtectedRoute>
