@@ -20,7 +20,7 @@ import { SaleService } from "@/lib/services/saleService";
 import { OrderService } from "@/lib/services/orderService";
 import { LedgerService } from "@/lib/services/ledgerService";
 import { VendorService } from "@/lib/services/vendorService";
-import { Sale, Order, LedgerEntry, Customer, PurchaseOrder, Vendor } from "@/lib/types";
+import { Sale, Order, LedgerEntry, Customer, PurchaseOrder, Vendor, User } from "@/lib/types";
 import { Loader2, ExternalLink } from "lucide-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -50,6 +50,7 @@ export function TransactionDetailsDialog({
   const [purchaseOrder, setPurchaseOrder] = useState<PurchaseOrder | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [vendor, setVendor] = useState<Vendor | null>(null);
+  const [performedByUser, setPerformedByUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,9 +64,23 @@ export function TransactionDetailsDialog({
       setPurchaseOrder(null);
       setCustomer(null);
       setVendor(null);
+      setPerformedByUser(null);
       setError(null);
     }
   }, [open, transactionId, transactionType, source]);
+
+  // Helper function to fetch user by ID
+  const fetchUser = async (userId: string) => {
+    try {
+      const userDoc = await getDoc(doc(db, "users", userId));
+      if (userDoc.exists()) {
+        return { id: userDoc.id, ...userDoc.data() } as User;
+      }
+    } catch (err) {
+      console.error("Error fetching user:", err);
+    }
+    return null;
+  };
 
   const fetchTransactionDetails = async () => {
     setLoading(true);
@@ -87,6 +102,11 @@ export function TransactionDetailsDialog({
               console.error("Error fetching customer:", err);
             }
           }
+          // Fetch user who performed the sale
+          if (saleData.performedBy) {
+            const user = await fetchUser(saleData.performedBy);
+            if (user) setPerformedByUser(user);
+          }
         } else {
           setError("Sale not found");
         }
@@ -95,6 +115,12 @@ export function TransactionDetailsDialog({
         const orderData = await OrderService.getOrder(transactionId);
         if (orderData) {
           setOrder(orderData);
+          // Fetch user who performed/confirmed the order (check both performedBy and processedBy for backward compatibility)
+          const performedBy = orderData.performedBy || (orderData as any).processedBy;
+          if (performedBy) {
+            const user = await fetchUser(performedBy);
+            if (user) setPerformedByUser(user);
+          }
         } else {
           setError("Order not found");
         }
@@ -112,6 +138,12 @@ export function TransactionDetailsDialog({
           } catch (err) {
             console.error("Error fetching vendor:", err);
           }
+          // Fetch user who performed the purchase (use receivedBy if available, otherwise createdBy)
+          const performedBy = poData.receivedBy || poData.createdBy;
+          if (performedBy) {
+            const user = await fetchUser(performedBy);
+            if (user) setPerformedByUser(user);
+          }
         } else {
           setError("Purchase order not found");
         }
@@ -125,6 +157,11 @@ export function TransactionDetailsDialog({
         const entry = entries.find((e) => e.id === transactionId);
         if (entry) {
           setLedgerEntry(entry);
+          // Fetch user who performed the ledger entry
+          if (entry.performedBy) {
+            const user = await fetchUser(entry.performedBy);
+            if (user) setPerformedByUser(user);
+          }
         } else {
           setError("Ledger entry not found");
         }
@@ -194,6 +231,14 @@ export function TransactionDetailsDialog({
                 <p className="text-sm text-gray-600">Source</p>
                 <p className="font-medium">{sale.source || "POS"}</p>
               </div>
+              {performedByUser && (
+                <div>
+                  <p className="text-sm text-gray-600">Performed By</p>
+                  <p className="font-medium">
+                    {performedByUser.displayName || performedByUser.email || "Unknown"}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div>
@@ -306,6 +351,14 @@ export function TransactionDetailsDialog({
                 <p className="text-sm text-gray-600">Address</p>
                 <p className="font-medium">{order.customerInfo.address}</p>
               </div>
+              {performedByUser && (
+                <div>
+                  <p className="text-sm text-gray-600">Performed By</p>
+                  <p className="font-medium">
+                    {performedByUser.displayName || performedByUser.email || "Unknown"}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div>
@@ -400,6 +453,14 @@ export function TransactionDetailsDialog({
                   <p className="font-mono text-xs">{ledgerEntry.relatedId}</p>
                 </div>
               )}
+              {performedByUser && (
+                <div>
+                  <p className="text-sm text-gray-600">Performed By</p>
+                  <p className="font-medium">
+                    {performedByUser.displayName || performedByUser.email || "Unknown"}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div>
@@ -458,6 +519,14 @@ export function TransactionDetailsDialog({
                     <p className="text-sm text-gray-600">Received Date</p>
                     <p className="font-medium">
                       {purchaseOrder.receivedAt.toDate().toLocaleString()}
+                    </p>
+                  </div>
+                )}
+                {performedByUser && (
+                  <div>
+                    <p className="text-sm text-gray-600">Performed By</p>
+                    <p className="font-medium">
+                      {performedByUser.displayName || performedByUser.email || "Unknown"}
                     </p>
                   </div>
                 )}

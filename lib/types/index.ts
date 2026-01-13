@@ -289,6 +289,7 @@ export type Order = {
   loyaltyPointsEarned?: number; // Points earned from this order
   notes?: string; // Admin notes
   source?: "POS" | "ONLINE"; // Transaction source (default: "ONLINE")
+  performedBy?: string; // User ID who processed/confirmed the order (optional for customer-created orders)
   createdAt: Timestamp;
   updatedAt: Timestamp;
   confirmedAt?: Timestamp;

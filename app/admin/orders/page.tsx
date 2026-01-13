@@ -24,8 +24,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { OrderService } from "@/lib/services/orderService";
-import { Order, OrderStatus } from "@/lib/types";
+import { Order, OrderStatus, User } from "@/lib/types";
 import { Eye, Calendar } from "lucide-react";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 import Link from "next/link";
 
 export default function AdminOrdersPage() {
@@ -37,6 +39,7 @@ export default function AdminOrdersPage() {
     start: "",
     end: "",
   });
+  const [usersMap, setUsersMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     fetchOrders();
@@ -59,6 +62,31 @@ export default function AdminOrdersPage() {
 
       const allOrders = await OrderService.getAllOrders(filters);
       setOrders(allOrders);
+
+      // Fetch user information for orders that have performedBy
+      const userIds = new Set<string>();
+      allOrders.forEach((order) => {
+        if (order.performedBy) userIds.add(order.performedBy);
+        if ((order as any).processedBy) userIds.add((order as any).processedBy);
+      });
+
+      if (userIds.size > 0) {
+        const users = new Map<string, string>();
+        const fetchPromises = Array.from(userIds).map(async (userId) => {
+          try {
+            const userDoc = await getDoc(doc(db, "users", userId));
+            if (userDoc.exists()) {
+              const userData = userDoc.data() as User;
+              const displayName = userData.displayName || userData.email || "Unknown";
+              users.set(userId, displayName);
+            }
+          } catch (error) {
+            console.error(`Error fetching user ${userId}:`, error);
+          }
+        });
+        await Promise.all(fetchPromises);
+        setUsersMap(users);
+      }
     } catch (error) {
       console.error("Error fetching orders:", error);
     } finally {
@@ -174,41 +202,51 @@ export default function AdminOrdersPage() {
                       <TableHead>Items</TableHead>
                       <TableHead>Total</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Performed By</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {orders.map((order) => (
-                      <TableRow key={order.id}>
-                        <TableCell className="font-medium">
-                          {order.orderNumber}
-                        </TableCell>
-                        <TableCell>{order.customerInfo.name}</TableCell>
-                        <TableCell>{order.customerInfo.phone}</TableCell>
-                        <TableCell>{order.items.length} item(s)</TableCell>
-                        <TableCell>Rs {order.total.toFixed(2)}</TableCell>
-                        <TableCell>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(
-                              order.status
-                            )}`}
-                          >
-                            {order.status}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {order.createdAt.toDate().toLocaleDateString()}
-                        </TableCell>
-                        <TableCell>
-                          <Link href={`/admin/orders/${order.orderNumber}`}>
-                            <Button variant="ghost" size="sm">
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {orders.map((order) => {
+                      const performedBy = order.performedBy || (order as any).processedBy;
+                      const performedByName = performedBy 
+                        ? (usersMap.get(performedBy) || `User: ${performedBy.substring(0, 8)}...`)
+                        : "N/A";
+                      return (
+                        <TableRow key={order.id}>
+                          <TableCell className="font-medium">
+                            {order.orderNumber}
+                          </TableCell>
+                          <TableCell>{order.customerInfo.name}</TableCell>
+                          <TableCell>{order.customerInfo.phone}</TableCell>
+                          <TableCell>{order.items.length} item(s)</TableCell>
+                          <TableCell>Rs {order.total.toFixed(2)}</TableCell>
+                          <TableCell>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(
+                                order.status
+                              )}`}
+                            >
+                              {order.status}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {performedByName}
+                          </TableCell>
+                          <TableCell>
+                            {order.createdAt.toDate().toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
+                            <Link href={`/admin/orders/${order.orderNumber}`}>
+                              <Button variant="ghost" size="sm">
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>

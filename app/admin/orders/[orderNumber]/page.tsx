@@ -24,11 +24,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { OrderService } from "@/lib/services/orderService";
-import { Order, OrderStatus } from "@/lib/types";
+import { Order, OrderStatus, User } from "@/lib/types";
 import { printReceipt, downloadReceiptHTML } from "@/lib/utils/receiptGenerator";
 import { useAuth } from "@/contexts/AuthContext";
 import { ArrowLeft, Download, Printer, User } from "lucide-react";
 import Link from "next/link";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 export default function AdminOrderDetailPage() {
   const params = useParams();
@@ -40,6 +42,7 @@ export default function AdminOrderDetailPage() {
   const [updating, setUpdating] = useState(false);
   const [status, setStatus] = useState<OrderStatus>("PENDING");
   const [notes, setNotes] = useState("");
+  const [performedByUser, setPerformedByUser] = useState<User | null>(null);
 
   useEffect(() => {
     fetchOrder();
@@ -52,6 +55,27 @@ export default function AdminOrderDetailPage() {
         setOrder(foundOrder);
         setStatus(foundOrder.status);
         setNotes(foundOrder.notes || "");
+
+        // Reset performedByUser first
+        setPerformedByUser(null);
+
+        // Fetch user who performed/completed the order
+        // Check both performedBy and processedBy for backward compatibility
+        const performedBy = foundOrder.performedBy || (foundOrder as any).processedBy;
+        if (performedBy) {
+          try {
+            const userDoc = await getDoc(doc(db, "users", performedBy));
+            if (userDoc.exists()) {
+              setPerformedByUser({ id: userDoc.id, ...userDoc.data() } as User);
+            } else {
+              console.warn(`User ${performedBy} not found for order ${foundOrder.id}`);
+            }
+          } catch (error) {
+            console.error("Error fetching performedBy user:", error);
+          }
+        } else {
+          console.log(`Order ${foundOrder.id} has no performedBy field`);
+        }
       }
     } catch (error) {
       console.error("Error fetching order:", error);
@@ -61,17 +85,24 @@ export default function AdminOrderDetailPage() {
   };
 
   const handleStatusUpdate = async () => {
-    if (!order || !user) return;
+    if (!order || !user) {
+      alert("User not authenticated. Please log in again.");
+      return;
+    }
 
     setUpdating(true);
     try {
+      // Always pass user.uid to track who performed this update
       await OrderService.updateOrderStatus(order.id, status, user.uid);
       if (notes !== order.notes) {
         await OrderService.updateOrderNotes(order.id, notes);
       }
+      // Small delay to ensure database update is reflected
+      await new Promise(resolve => setTimeout(resolve, 500));
       await fetchOrder();
       alert("Order updated successfully");
     } catch (error: any) {
+      console.error("Error updating order:", error);
       alert(error.message || "Failed to update order");
     } finally {
       setUpdating(false);
@@ -79,7 +110,10 @@ export default function AdminOrderDetailPage() {
   };
 
   const handleCompleteOrder = async () => {
-    if (!order || !user) return;
+    if (!order || !user) {
+      alert("User not authenticated. Please log in again.");
+      return;
+    }
 
     if (!confirm("Are you sure you want to mark this order as completed?")) {
       return;
@@ -87,11 +121,15 @@ export default function AdminOrderDetailPage() {
 
     setUpdating(true);
     try {
+      // Always pass user.uid to track who completed this order
       await OrderService.updateOrderStatus(order.id, "COMPLETED", user.uid);
+      // Small delay to ensure database update is reflected
+      await new Promise(resolve => setTimeout(resolve, 500));
       await fetchOrder();
       alert("Order marked as completed successfully");
     } catch (error: unknown) {
       const err = error as { message?: string };
+      console.error("Error completing order:", error);
       alert(err.message || "Failed to complete order");
     } finally {
       setUpdating(false);
@@ -232,6 +270,14 @@ export default function AdminOrderDetailPage() {
                     <span className="text-gray-600">Payment Method:</span>
                     <span className="font-medium">{order.paymentMethod}</span>
                   </div>
+                  {performedByUser && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Processed By:</span>
+                      <span className="font-medium">
+                        {performedByUser.displayName || performedByUser.email || "Unknown"}
+                      </span>
+                    </div>
+                  )}
                   {order.loyaltyPointsUsed && (
                     <div className="flex justify-between">
                       <span className="text-gray-600">Points Used:</span>

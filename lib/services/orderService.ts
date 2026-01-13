@@ -298,13 +298,26 @@ export class OrderService {
         shippedAt?: Timestamp;
         cancelledAt?: Timestamp;
         completedAt?: Timestamp;
-        processedBy?: string;
+        performedBy?: string;
+        processedBy?: string; // For backward compatibility
       };
 
       const updateData: OrderUpdateData = {
         status,
         updatedAt: Timestamp.now(),
       };
+
+      // Always save performedBy if provided (who performed this status update)
+      // This tracks who made any status change (confirmed, shipped, completed, cancelled)
+      // We save it on every update to track the latest person who updated the order
+      if (performedBy) {
+        updateData.performedBy = performedBy;
+        updateData.processedBy = performedBy; // For backward compatibility
+      } else {
+        // If no performedBy provided but we're updating status, log a warning
+        // This should not happen in normal operation as all status updates should have a user
+        console.warn(`Order ${orderId} status updated to ${status} without performedBy - this should not happen`);
+      }
 
       // Set timestamp based on status
       if (status === "CONFIRMED") {

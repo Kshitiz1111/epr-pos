@@ -25,6 +25,9 @@ import { DollarSign, TrendingUp, TrendingDown, FileText, BarChart3, Calendar, Ey
 import { Timestamp } from "firebase/firestore";
 import Link from "next/link";
 import { TransactionDetailsDialog } from "@/components/admin/TransactionDetailsDialog";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { User } from "@/lib/types";
 
 type UnifiedTransaction = {
   id: string;
@@ -36,6 +39,8 @@ type UnifiedTransaction = {
   paymentMethod: string;
   source?: "LEDGER" | "POS" | "ONLINE" | "PURCHASE";
   vendorId?: string; // For purchase orders
+  performedBy?: string; // User ID
+  performedByName?: string; // User display name for easy rendering
 };
 
 export default function FinancePage() {
@@ -57,6 +62,43 @@ export default function FinancePage() {
   useEffect(() => {
     fetchFinanceData();
   }, [selectedDate]);
+
+  // Helper function to batch fetch user information
+  const fetchUsersMap = async (userIds: string[]): Promise<Map<string, string>> => {
+    const usersMap = new Map<string, string>();
+    if (userIds.length === 0) return usersMap;
+
+    try {
+      // Fetch users directly by document ID (more reliable than query)
+      const fetchPromises = userIds.map(async (userId) => {
+        try {
+          const userDoc = await getDoc(doc(db, "users", userId));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as User;
+            const displayName = userData.displayName || userData.email || "Unknown";
+            usersMap.set(userDoc.id, displayName);
+            return userId;
+          }
+          return null;
+        } catch (error) {
+          console.error(`Error fetching user ${userId}:`, error);
+          return null;
+        }
+      });
+
+      const fetchedUserIds = (await Promise.all(fetchPromises)).filter(id => id !== null) as string[];
+
+      // Log any user IDs that weren't found (deleted users or invalid IDs)
+      const missingUserIds = userIds.filter(id => !fetchedUserIds.includes(id));
+      if (missingUserIds.length > 0) {
+        console.warn(`Users not found (may be deleted):`, missingUserIds);
+      }
+    } catch (error) {
+      console.error("Error fetching users:", error);
+    }
+
+    return usersMap;
+  };
 
   const fetchFinanceData = async () => {
     setLoading(true);
@@ -158,11 +200,44 @@ export default function FinancePage() {
         return true; // Include all other entries (expenses, manual income, etc.)
       });
 
+      // Collect all user IDs from transactions
+      const userIds = new Set<string>();
+      
+      // Collect from ledger entries
+      manualLedgerEntries.forEach((entry) => {
+        if (entry.performedBy) userIds.add(entry.performedBy);
+      });
+      
+      // Collect from sales
+      sales.forEach((sale) => {
+        if (sale.performedBy) userIds.add(sale.performedBy);
+      });
+      
+      // Collect from orders (check both performedBy and processedBy for backward compatibility)
+      orders.forEach((order) => {
+        if (order.performedBy) userIds.add(order.performedBy);
+        // Also check processedBy field for backward compatibility
+        if ((order as any).processedBy) userIds.add((order as any).processedBy);
+      });
+      
+      // Collect from purchase orders (use createdBy or receivedBy)
+      purchaseOrders.forEach((po) => {
+        if (po.createdBy) userIds.add(po.createdBy);
+        if (po.receivedBy) userIds.add(po.receivedBy);
+      });
+
+      // Batch fetch all users
+      const usersMap = await fetchUsersMap(Array.from(userIds));
+
       // Create unified transaction list
       const unifiedTransactions: UnifiedTransaction[] = [];
 
       // Add manual ledger entries (excluding auto-generated sales entries)
       manualLedgerEntries.forEach((entry) => {
+        // Ledger entries should always have performedBy (user who created the expense/income)
+        const performedByName = entry.performedBy 
+          ? (usersMap.get(entry.performedBy) || `User: ${entry.performedBy.substring(0, 8)}...`)
+          : "System";
         unifiedTransactions.push({
           id: entry.id,
           date: entry.date,
@@ -172,11 +247,17 @@ export default function FinancePage() {
           amount: entry.amount,
           paymentMethod: entry.paymentMethod,
           source: "LEDGER",
+          performedBy: entry.performedBy,
+          performedByName,
         });
       });
 
       // Add POS sales as income
       sales.forEach((sale) => {
+        // POS sales should always have performedBy (staff who made the sale)
+        const performedByName = sale.performedBy 
+          ? (usersMap.get(sale.performedBy) || `User: ${sale.performedBy.substring(0, 8)}...`)
+          : "System";
         unifiedTransactions.push({
           id: sale.id,
           date: sale.createdAt,
@@ -186,11 +267,19 @@ export default function FinancePage() {
           amount: sale.total,
           paymentMethod: sale.paymentMethod,
           source: "POS",
+          performedBy: sale.performedBy,
+          performedByName,
         });
       });
 
       // Add online orders (confirmed/completed) as income
       confirmedOrCompletedOrders.forEach((order) => {
+        // Use performedBy (who confirmed/finalized) or processedBy (backward compatibility)
+        const performedBy = order.performedBy || (order as any).processedBy;
+        // For orders, if no performedBy, it means customer-created order not yet processed by staff
+        const performedByName = performedBy 
+          ? (usersMap.get(performedBy) || `User: ${performedBy.substring(0, 8)}...`)
+          : "N/A"; // Customer-created order, not yet processed by staff
         unifiedTransactions.push({
           id: order.id,
           date: order.createdAt,
@@ -200,11 +289,16 @@ export default function FinancePage() {
           amount: order.total,
           paymentMethod: order.paymentMethod,
           source: "ONLINE",
+          performedBy: performedBy || undefined,
+          performedByName,
         });
       });
 
       // Add purchase orders (received) as expenses
       receivedPOs.forEach((po) => {
+        // Use receivedBy if available, otherwise createdBy
+        const performedBy = po.receivedBy || po.createdBy;
+        const performedByName = performedBy ? (usersMap.get(performedBy) || "Unknown") : undefined;
         unifiedTransactions.push({
           id: po.id,
           date: po.createdAt,
@@ -215,6 +309,8 @@ export default function FinancePage() {
           paymentMethod: "CREDIT", // Purchase orders are typically on credit
           source: "PURCHASE",
           vendorId: po.vendorId, // Store vendorId for navigation
+          performedBy,
+          performedByName,
         } as UnifiedTransaction & { vendorId?: string });
       });
 
@@ -381,6 +477,7 @@ export default function FinancePage() {
                         <TableHead>Category</TableHead>
                         <TableHead>Description</TableHead>
                         <TableHead>Source</TableHead>
+                        <TableHead>Performed By</TableHead>
                         <TableHead>Payment Method</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -411,6 +508,9 @@ export default function FinancePage() {
                                 {transaction.source}
                               </span>
                             )}
+                          </TableCell>
+                          <TableCell>
+                            {transaction.performedByName || (transaction.performedBy ? `User: ${transaction.performedBy.substring(0, 8)}...` : "System")}
                           </TableCell>
                           <TableCell>{transaction.paymentMethod}</TableCell>
                           <TableCell
