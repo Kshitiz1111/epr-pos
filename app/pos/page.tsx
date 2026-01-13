@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SaleService } from "@/lib/services/saleService";
 import { ProductService } from "@/lib/services/productService";
@@ -16,17 +16,19 @@ import { usePermissions } from "@/lib/hooks/usePermissions";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import Fuse from "fuse.js";
-import { Search, Trash2, ShoppingCart, User, Menu, X, LayoutDashboard, Package, User as UserIcon, LogOut, Users, Warehouse, Building2, DollarSign, CreditCard, ShoppingBag } from "lucide-react";
+import { Search, ShoppingCart, User, Menu, X, LayoutDashboard, Package, User as UserIcon, LogOut, Users, Warehouse, Building2, DollarSign, CreditCard, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Cart } from "@/components/pos/Cart";
 
 export default function POSPage() {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refreshUser } = useAuth();
   const { hasPermission } = usePermissions();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
@@ -40,10 +42,18 @@ export default function POSPage() {
   const [processing, setProcessing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+  const [discountAmount, setDiscountAmount] = useState<number>(0);
+  const [discountType, setDiscountType] = useState<"percentage" | "amount">("percentage");
+  const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
+  const [discountInputValue, setDiscountInputValue] = useState<string>("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchProducts();
     fetchCustomers();
+    // Refresh user data to get latest permissions
+    refreshUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -63,15 +73,21 @@ export default function POSPage() {
 
   // Update advance payment when total changes (for selected customers)
   useEffect(() => {
-    if (selectedCustomer) {
+    if (selectedCustomer && cart.length > 0) {
       const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
-      const total = subtotal;
-      // Only update if current advance payment exceeds new total
-      if (advancePayment > total) {
-        setAdvancePayment(total);
-      }
+      const calculatedDiscount = discountType === "percentage" 
+        ? subtotal * (discountAmount / 100)
+        : discountAmount;
+      const total = subtotal - calculatedDiscount;
+      // Set advance payment to total if it's 0 or less than total, or cap it if it exceeds total
+      setAdvancePayment((prev) => {
+        if (prev === 0 || prev > total) {
+          return total;
+        }
+        return prev;
+      });
     }
-  }, [cart, selectedCustomer, advancePayment]);
+  }, [cart, selectedCustomer, discountAmount, discountType]);
 
   // Barcode scanner integration
   useBarcodeScanner({
@@ -83,6 +99,36 @@ export default function POSPage() {
     },
     enabled: true,
   });
+
+  // Keyboard shortcuts for faster POS operations
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + Enter: Complete sale
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        if (cart.length > 0 && !processing) {
+          e.preventDefault();
+          handleCheckout();
+        }
+      }
+      // Escape: Close dialogs or clear search
+      if (e.key === "Escape") {
+        if (discountDialogOpen) {
+          setDiscountDialogOpen(false);
+        } else if (cartOpen) {
+          setCartOpen(false);
+        } else if (sidebarOpen) {
+          setSidebarOpen(false);
+        } else if (searchQuery) {
+          setSearchQuery("");
+          searchInputRef.current?.focus();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart.length, processing, discountDialogOpen, cartOpen, sidebarOpen, searchQuery]);
 
   const fetchProducts = async () => {
     try {
@@ -160,8 +206,11 @@ export default function POSPage() {
 
   const calculateTotals = () => {
     const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
-    const discount = 0; // Can be added later
-    const total = subtotal - discount;
+    const discount = discountType === "percentage" 
+      ? subtotal * (discountAmount / 100)
+      : discountAmount;
+    const finalDiscount = Math.min(discount, subtotal); // Ensure discount doesn't exceed subtotal
+    const total = Math.max(0, subtotal - finalDiscount);
     
     // For walk-in customers, they must pay full amount
     // For selected customers, use advance payment
@@ -171,7 +220,7 @@ export default function POSPage() {
     
     const creditAmount = selectedCustomer ? Math.max(0, total - paidAmount) : 0;
 
-    return { subtotal, discount, total, paidAmount, creditAmount };
+    return { subtotal, discount: finalDiscount, total, paidAmount, creditAmount };
   };
 
   const handleCheckout = async () => {
@@ -203,7 +252,7 @@ export default function POSPage() {
         {
           items: cart,
           subtotal: calculateTotals().subtotal,
-          discount: 0,
+          discount: calculateTotals().discount,
           total,
           paidAmount,
           dueAmount: creditAmount,
@@ -219,6 +268,13 @@ export default function POSPage() {
       setCart([]);
       setSelectedCustomer(null);
       setAdvancePayment(0);
+      setDiscountAmount(0);
+      setDiscountType("percentage");
+      setDiscountInputValue("");
+      // Auto-focus search input after successful checkout
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
       alert("Sale completed successfully!");
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to complete sale";
@@ -489,11 +545,21 @@ export default function POSPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                 <Input
+                  ref={searchInputRef}
                   placeholder="Search products or scan barcode..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 h-12 md:h-10"
                   autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && filteredProducts.length > 0) {
+                      addToCart(filteredProducts[0]);
+                      setSearchQuery("");
+                    }
+                    if (e.key === "Escape") {
+                      setSearchQuery("");
+                    }
+                  }}
                 />
               </div>
             </div>
@@ -551,154 +617,158 @@ export default function POSPage() {
 
           {/* Cart Sidebar - Desktop Only */}
           <div className="hidden md:flex w-96 bg-white border-l flex flex-col">
-            <CardHeader className="border-b">
-              <CardTitle className="flex items-center gap-2">
-                <ShoppingCart className="h-5 w-5" />
-                Cart ({cart.length})
-              </CardTitle>
-            </CardHeader>
-
-            <CardContent className="flex-1 overflow-y-auto p-4">
-              {cart.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">Cart is empty</div>
-              ) : (
-                <div className="space-y-3">
-                  {cart.map((item) => (
-                    <div key={item.productId} className="border rounded p-4 md:p-3 space-y-2">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <p className="font-semibold text-sm">{item.productName}</p>
-                          <p className="text-xs text-gray-500">SKU: {item.sku}</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-12 w-12 md:h-10 md:w-10"
-                          onClick={() => removeFromCart(item.productId)}
-                        >
-                          <Trash2 className="h-5 w-5 md:h-4 md:w-4" />
-                        </Button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-w-12 h-12 md:min-w-10 md:h-10"
-                          onClick={() => updateCartItem(item.productId, { quantity: Math.max(1, item.quantity - 1) })}
-                        >
-                          -
-                        </Button>
-                        <Input
-                          type="number"
-                          inputMode="numeric"
-                          value={item.quantity}
-                          onChange={(e) =>
-                            updateCartItem(item.productId, { quantity: parseInt(e.target.value) || 1 })
-                          }
-                          className="w-16 md:w-16 text-center h-12 md:h-10"
-                          min={1}
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-w-12 h-12 md:min-w-10 md:h-10"
-                          onClick={() => updateCartItem(item.productId, { quantity: item.quantity + 1 })}
-                        >
-                          +
-                        </Button>
-                      </div>
-                      <p className="text-right font-semibold">Rs {item.subtotal.toFixed(2)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-
-            {/* Cart Summary */}
-            <div className="border-t p-4 space-y-3 bg-gray-50">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span>Rs {subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Discount:</span>
-                  <span>Rs {discount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total:</span>
-                  <span>Rs {total.toFixed(2)}</span>
-                </div>
-                
-                {/* Advance Payment Input - Only for selected customers */}
-                {selectedCustomer && (
-                  <div className="space-y-2 pt-2 border-t">
-                    <Label htmlFor="advance-payment">Advance Payment (Rs)</Label>
-                    <Input
-                      id="advance-payment"
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      max={total}
-                      step="0.01"
-                      value={advancePayment}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value) || 0;
-                        setAdvancePayment(Math.min(Math.max(0, value), total));
-                      }}
-                      placeholder="Enter advance payment amount"
-                      className="h-12 md:h-10"
-                    />
-                    <p className="text-xs text-gray-500">
-                      Customer will pay Rs {advancePayment.toFixed(2)} now, remaining Rs {Math.max(0, total - advancePayment).toFixed(2)} will be credit
-                    </p>
-                  </div>
-                )}
-                
-                <div className="flex justify-between text-sm text-green-600 border-t pt-2">
-                  <span>Paid:</span>
-                  <span>Rs {paidAmount.toFixed(2)}</span>
-                </div>
-                {selectedCustomer && creditAmount > 0 && (
-                  <div className="flex justify-between text-sm text-red-600">
-                    <span>Credit (Pay Later):</span>
-                    <span>Rs {creditAmount.toFixed(2)}</span>
-                  </div>
-                )}
-                {!selectedCustomer && (
-                  <div className="text-xs text-gray-500 pt-1">
-                    Walk-in customers must pay full amount
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Payment Method</Label>
-                <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="CASH">Cash</SelectItem>
-                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
-                    <SelectItem value="FONE_PAY">FonePay</SelectItem>
-                    <SelectItem value="CHEQUE">Cheque</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Button
-                onClick={handleCheckout}
-                disabled={cart.length === 0 || processing}
-                className="w-full min-h-12 md:min-h-10"
-                size="lg"
-              >
-                {processing ? "Processing..." : `Complete Sale (Rs ${paidAmount.toFixed(2)})`}
-              </Button>
-            </div>
+            <Card className="flex flex-col h-full">
+              <Cart
+                cart={cart}
+                subtotal={subtotal}
+                discount={discount}
+                total={total}
+                paidAmount={paidAmount}
+                creditAmount={creditAmount}
+                selectedCustomer={selectedCustomer}
+                advancePayment={advancePayment}
+                paymentMethod={paymentMethod}
+                processing={processing}
+                hasPermission={(resource, action) => {
+                  // Type-safe wrapper for hasPermission
+                  const validResources = ["inventory", "finance", "customers", "employees", "vendors", "pos", "reports", "orders", "hr", "settings"] as const;
+                  const validActions = ["view", "create", "update", "delete", "viewCredits", "settleCredits", "applyDiscount"] as const;
+                  if (validResources.includes(resource as typeof validResources[number]) && 
+                      validActions.includes(action as typeof validActions[number])) {
+                    return hasPermission(resource as typeof validResources[number], action as typeof validActions[number]);
+                  }
+                  return false;
+                }}
+                onUpdateItem={updateCartItem}
+                onRemoveItem={removeFromCart}
+                onClearCart={() => {
+                  setCart([]);
+                  setDiscountAmount(0);
+                  setAdvancePayment(0);
+                }}
+                onAdvancePaymentChange={(value) => setAdvancePayment(value)}
+                onPaymentMethodChange={setPaymentMethod}
+                onApplyDiscount={() => {
+                  setDiscountInputValue(discountAmount > 0 ? discountAmount.toString() : "");
+                  setDiscountDialogOpen(true);
+                }}
+                onRemoveDiscount={() => {
+                  setDiscountAmount(0);
+                  setDiscountInputValue("");
+                }}
+                onCheckout={handleCheckout}
+                variant="desktop"
+              />
+            </Card>
           </div>
           </div>
         </div>
+
+        {/* Discount Dialog */}
+        <Dialog open={discountDialogOpen} onOpenChange={setDiscountDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Apply Discount</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Discount Type</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={discountType === "percentage" ? "default" : "outline"}
+                    onClick={() => {
+                      setDiscountType("percentage");
+                      setDiscountInputValue(""); // Clear input when switching type
+                      setDiscountAmount(0); // Clear applied discount when switching type
+                    }}
+                    className="flex-1"
+                  >
+                    Percentage (%)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={discountType === "amount" ? "default" : "outline"}
+                    onClick={() => {
+                      setDiscountType("amount");
+                      setDiscountInputValue(""); // Clear input when switching type
+                      setDiscountAmount(0); // Clear applied discount when switching type
+                    }}
+                    className="flex-1"
+                  >
+                    Amount (Rs)
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="discount-value">
+                  {discountType === "percentage" ? "Discount Percentage" : "Discount Amount (Rs)"}
+                </Label>
+                <Input
+                  id="discount-value"
+                  type="number"
+                  inputMode="decimal"
+                  value={discountInputValue}
+                  onChange={(e) => setDiscountInputValue(e.target.value)}
+                  placeholder={discountType === "percentage" ? "Enter percentage (e.g., 10)" : "Enter amount (e.g., 50)"}
+                  min={0}
+                  max={discountType === "percentage" ? 100 : undefined}
+                  step={discountType === "percentage" ? 0.01 : 0.01}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const value = parseFloat(discountInputValue) || 0;
+                      if (discountType === "percentage") {
+                        setDiscountAmount(Math.min(100, Math.max(0, value)));
+                      } else {
+                        const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+                        setDiscountAmount(Math.min(subtotal, Math.max(0, value)));
+                      }
+                      setDiscountDialogOpen(false);
+                    }
+                  }}
+                  autoFocus
+                />
+                {discountType === "percentage" && discountInputValue && (
+                  <p className="text-xs text-gray-500">
+                    Discount: Rs {((cart.reduce((sum, item) => sum + item.subtotal, 0) * (parseFloat(discountInputValue) || 0)) / 100).toFixed(2)}
+                  </p>
+                )}
+                {discountType === "amount" && discountInputValue && (
+                  <p className="text-xs text-gray-500">
+                    Max discount: Rs {cart.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2)}
+                  </p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDiscountDialogOpen(false);
+                  setDiscountInputValue("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  const value = parseFloat(discountInputValue) || 0;
+                  if (discountType === "percentage") {
+                    setDiscountAmount(Math.min(100, Math.max(0, value)));
+                  } else {
+                    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+                    setDiscountAmount(Math.min(subtotal, Math.max(0, value)));
+                  }
+                  setDiscountDialogOpen(false);
+                  setDiscountInputValue("");
+                }}
+              >
+                Apply
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Floating Cart Button - Mobile Only */}
         {cart.length > 0 && (
@@ -721,153 +791,51 @@ export default function POSPage() {
         {/* Bottom Sheet Cart - Mobile Only */}
         <Sheet open={cartOpen} onOpenChange={setCartOpen}>
           <SheetContent side="bottom" className="h-[85vh] flex flex-col p-0">
-            <SheetHeader className="p-4 border-b">
-              <SheetTitle className="flex items-center gap-2">
-                <ShoppingCart className="h-5 w-5" />
-                Cart ({cart.length})
-              </SheetTitle>
-            </SheetHeader>
-
-            <div className="flex-1 overflow-y-auto p-4">
-              {cart.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">Cart is empty</div>
-              ) : (
-                <div className="space-y-3">
-                  {cart.map((item) => (
-                    <div key={item.productId} className="border rounded p-4 space-y-2">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <p className="font-semibold text-sm">{item.productName}</p>
-                          <p className="text-xs text-gray-500">SKU: {item.sku}</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-12 w-12"
-                          onClick={() => removeFromCart(item.productId)}
-                        >
-                          <Trash2 className="h-5 w-5" />
-                        </Button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-w-12 h-12"
-                          onClick={() => updateCartItem(item.productId, { quantity: Math.max(1, item.quantity - 1) })}
-                        >
-                          -
-                        </Button>
-                        <Input
-                          type="number"
-                          inputMode="numeric"
-                          value={item.quantity}
-                          onChange={(e) =>
-                            updateCartItem(item.productId, { quantity: parseInt(e.target.value) || 1 })
-                          }
-                          className="w-16 text-center h-12"
-                          min={1}
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-w-12 h-12"
-                          onClick={() => updateCartItem(item.productId, { quantity: item.quantity + 1 })}
-                        >
-                          +
-                        </Button>
-                      </div>
-                      <p className="text-right font-semibold">Rs {item.subtotal.toFixed(2)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Cart Summary - Fixed at bottom */}
-            <div className="border-t p-4 space-y-3 bg-gray-50">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span>Rs {subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Discount:</span>
-                  <span>Rs {discount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total:</span>
-                  <span>Rs {total.toFixed(2)}</span>
-                </div>
-                
-                {/* Advance Payment Input - Only for selected customers */}
-                {selectedCustomer && (
-                  <div className="space-y-2 pt-2 border-t">
-                    <Label htmlFor="advance-payment-mobile">Advance Payment (Rs)</Label>
-                    <Input
-                      id="advance-payment-mobile"
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      max={total}
-                      step="0.01"
-                      value={advancePayment}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value) || 0;
-                        setAdvancePayment(Math.min(Math.max(0, value), total));
-                      }}
-                      placeholder="Enter advance payment amount"
-                      className="h-12"
-                    />
-                    <p className="text-xs text-gray-500">
-                      Customer will pay Rs {advancePayment.toFixed(2)} now, remaining Rs {Math.max(0, total - advancePayment).toFixed(2)} will be credit
-                    </p>
-                  </div>
-                )}
-                
-                <div className="flex justify-between text-sm text-green-600 border-t pt-2">
-                  <span>Paid:</span>
-                  <span>Rs {paidAmount.toFixed(2)}</span>
-                </div>
-                {selectedCustomer && creditAmount > 0 && (
-                  <div className="flex justify-between text-sm text-red-600">
-                    <span>Credit (Pay Later):</span>
-                    <span>Rs {creditAmount.toFixed(2)}</span>
-                  </div>
-                )}
-                {!selectedCustomer && (
-                  <div className="text-xs text-gray-500 pt-1">
-                    Walk-in customers must pay full amount
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Payment Method</Label>
-                <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
-                  <SelectTrigger className="h-12">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="CASH">Cash</SelectItem>
-                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
-                    <SelectItem value="FONE_PAY">FonePay</SelectItem>
-                    <SelectItem value="CHEQUE">Cheque</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Button
-                onClick={() => {
+            <div className="flex flex-col h-full">
+              <Cart
+                cart={cart}
+                subtotal={subtotal}
+                discount={discount}
+                total={total}
+                paidAmount={paidAmount}
+                creditAmount={creditAmount}
+                selectedCustomer={selectedCustomer}
+                advancePayment={advancePayment}
+                paymentMethod={paymentMethod}
+                processing={processing}
+                hasPermission={(resource, action) => {
+                  // Type-safe wrapper for hasPermission
+                  const validResources = ["inventory", "finance", "customers", "employees", "vendors", "pos", "reports", "orders", "hr", "settings"] as const;
+                  const validActions = ["view", "create", "update", "delete", "viewCredits", "settleCredits", "applyDiscount"] as const;
+                  if (validResources.includes(resource as typeof validResources[number]) && 
+                      validActions.includes(action as typeof validActions[number])) {
+                    return hasPermission(resource as typeof validResources[number], action as typeof validActions[number]);
+                  }
+                  return false;
+                }}
+                onUpdateItem={updateCartItem}
+                onRemoveItem={removeFromCart}
+                onClearCart={() => {
+                  setCart([]);
+                  setDiscountAmount(0);
+                  setAdvancePayment(0);
+                }}
+                onAdvancePaymentChange={(value) => setAdvancePayment(value)}
+                onPaymentMethodChange={setPaymentMethod}
+                onApplyDiscount={() => {
+                  setDiscountInputValue(discountAmount > 0 ? discountAmount.toString() : "");
+                  setDiscountDialogOpen(true);
+                }}
+                onRemoveDiscount={() => {
+                  setDiscountAmount(0);
+                  setDiscountInputValue("");
+                }}
+                onCheckout={() => {
                   handleCheckout();
                   setCartOpen(false);
                 }}
-                disabled={cart.length === 0 || processing}
-                className="w-full min-h-12"
-                size="lg"
-              >
-                {processing ? "Processing..." : `Complete Sale (Rs ${paidAmount.toFixed(2)})`}
-              </Button>
+                variant="mobile"
+              />
             </div>
           </SheetContent>
         </Sheet>

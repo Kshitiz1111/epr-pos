@@ -204,7 +204,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string,
     role: UserRole,
     permissions: EmployeePermissions,
-    displayName?: string
+    displayName?: string,
+    baseSalary?: number
   ): Promise<string> => {
     // Create Firebase Auth user
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -213,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Send email verification
     await sendEmailVerification(firebaseUser);
 
-    // Create user document in Firestore
+    // Create user document in Firestore with all employee data
     const userData: Omit<User, "id"> = {
       uid: firebaseUser.uid,
       email: firebaseUser.email!,
@@ -222,25 +223,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role,
       permissions,
       createdAt: serverTimestamp() as any,
-    };
-
-    await setDoc(doc(db, "users", firebaseUser.uid), userData);
-
-    // Create employee profile document
-    const employeeProfile = {
-      uid: firebaseUser.uid,
-      role,
+      // Employee-specific fields
       baseSalary: baseSalary || 0,
-      joiningDate: serverTimestamp(),
+      joiningDate: serverTimestamp() as any,
       status: "ACTIVE" as const,
       finance: {
         currentAdvance: 0,
         unpaidCommissions: 0,
       },
-      permissions,
     };
 
-    await setDoc(doc(db, "employees", firebaseUser.uid), employeeProfile);
+    await setDoc(doc(db, "users", firebaseUser.uid), userData);
 
     // Note: Setting custom claims requires a Cloud Function
     // This will be handled separately via Firebase Admin SDK

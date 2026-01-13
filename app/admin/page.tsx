@@ -185,7 +185,7 @@ export default function AdminDashboardPage() {
           ) : (
             <>
               {/* Financial Summary */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
                     <CardTitle className="text-sm font-medium text-gray-600">
@@ -233,7 +233,7 @@ export default function AdminDashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card>
+                {/* <Card>
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
                     <CardTitle className="text-sm font-medium text-gray-600">
                       Outstanding Credits
@@ -244,8 +244,11 @@ export default function AdminDashboardPage() {
                     <div className="text-2xl font-bold text-orange-600">
                       Rs {stats.outstandingCredits.toFixed(2)}
                     </div>
+                    <div className="flex gap-2 mt-2 text-xs text-gray-500">
+                      <span>Receivables From Customers</span>
+                    </div>
                   </CardContent>
-                </Card>
+                </Card> */}
               </div>
 
               {/* Sales & Orders Breakdown */}

@@ -21,7 +21,9 @@ export type EmployeePermissions = {
     };
     employees: ResourcePermission;
     vendors: ResourcePermission;
-    pos: ResourcePermission;
+    pos: ResourcePermission & {
+      applyDiscount: boolean;
+    };
     reports: ResourcePermission;
     orders: ResourcePermission;
     hr: ResourcePermission;
@@ -38,6 +40,14 @@ export type User = {
   permissions?: EmployeePermissions;
   createdAt: Timestamp;
   lastLogin?: Timestamp;
+  // Employee-specific fields (optional for backward compatibility)
+  baseSalary?: number;
+  joiningDate?: Timestamp;
+  status?: "ACTIVE" | "ON_LEAVE" | "TERMINATED";
+  finance?: {
+    currentAdvance: number;
+    unpaidCommissions: number;
+  };
 };
 
 // Product & Inventory Types

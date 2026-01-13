@@ -12,7 +12,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { AttendanceRecord, EmployeeProfile } from "@/lib/types";
+import { AttendanceRecord, User } from "@/lib/types";
 
 export class HRService {
   /**
@@ -130,12 +130,17 @@ export class HRService {
     netSalary: number;
   }> {
     try {
-      const employeeDoc = await getDoc(doc(db, "employees", employeeId));
-      if (!employeeDoc.exists()) {
+      const userDoc = await getDoc(doc(db, "users", employeeId));
+      if (!userDoc.exists()) {
         throw new Error("Employee not found");
       }
 
-      const employee = { id: employeeDoc.id, ...employeeDoc.data() } as EmployeeProfile;
+      const user = { id: userDoc.id, ...userDoc.data() } as User;
+
+      // Check if user has employee fields
+      if (!user.baseSalary && user.baseSalary !== 0) {
+        throw new Error("User is not an employee or missing salary information");
+      }
 
       // Get attendance for the month
       const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
@@ -143,14 +148,14 @@ export class HRService {
       const records = await this.getAttendanceRecords(employeeId, startDate, endDate);
 
       const daysPresent = records.filter((r) => r.checkOut).length;
-      const salaryPerDay = employee.baseSalary / 30;
+      const salaryPerDay = (user.baseSalary || 0) / 30;
       const salaryEarned = salaryPerDay * daysPresent;
-      const advances = employee.finance.currentAdvance;
-      const commissions = employee.finance.unpaidCommissions;
+      const advances = user.finance?.currentAdvance || 0;
+      const commissions = user.finance?.unpaidCommissions || 0;
       const netSalary = salaryEarned + commissions - advances;
 
       return {
-        baseSalary: employee.baseSalary,
+        baseSalary: user.baseSalary || 0,
         daysPresent,
         salaryEarned,
         advances,

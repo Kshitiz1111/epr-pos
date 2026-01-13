@@ -33,6 +33,7 @@ const actionLabels: Record<string, string> = {
   delete: "Delete",
   viewCredits: "View Credits",
   settleCredits: "Settle Credits",
+  applyDiscount: "Apply Discount",
 };
 
 // Complete list of all resources - always show all of them
@@ -73,7 +74,7 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
         },
         employees: { view: false, create: false, update: false, delete: false },
         vendors: { view: false, create: false, update: false, delete: false },
-        pos: { view: false, create: false, update: false, delete: false },
+        pos: { view: false, create: false, update: false, delete: false, applyDiscount: false },
         reports: { view: false, create: false, update: false, delete: false },
         orders: { view: false, create: false, update: false, delete: false },
         hr: { view: false, create: false, update: false, delete: false },
@@ -89,6 +90,10 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
           ...defaultPermissions.resources.customers,
           ...(localPermissions.resources.customers || {}),
         },
+        pos: {
+          ...defaultPermissions.resources.pos,
+          ...(localPermissions.resources.pos || {}),
+        },
       },
     };
   };
@@ -103,12 +108,16 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
     const newPermissions = { ...localPermissions };
     // Ensure resource exists in newPermissions
     if (!newPermissions.resources[resource]) {
-      newPermissions.resources[resource] = completePermissions.resources[resource];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      newPermissions.resources[resource] = { ...completePermissions.resources[resource] } as any;
     }
-    const resourcePerms = newPermissions.resources[resource];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const resourcePerms = newPermissions.resources[resource] as any;
 
     if (resource === "customers" && (action === "viewCredits" || action === "settleCredits")) {
-      (resourcePerms as any)[action] = value;
+      resourcePerms[action] = value;
+    } else if (resource === "pos" && action === "applyDiscount") {
+      resourcePerms[action] = value;
     } else if (action === "view" || action === "create" || action === "update" || action === "delete") {
       resourcePerms[action] = value;
     }
@@ -130,6 +139,7 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
           {allResources.map((resource) => {
             const resourcePerms = completePermissions.resources[resource];
             const isCustomers = resource === "customers";
+            const isPos = resource === "pos";
 
             return (
               <div key={resource} className="space-y-3 border-b pb-4 last:border-b-0">
@@ -139,11 +149,33 @@ export function PermissionMatrix({ permissions, onChange }: PermissionMatrixProp
                     if (typeof resourcePerms[action as keyof typeof resourcePerms] !== "boolean") {
                       // Handle nested permissions for customers
                       if (isCustomers && (action === "viewCredits" || action === "settleCredits")) {
+                        const checked = (resourcePerms as Record<string, boolean>)[action] || false;
                         return (
                           <div key={action} className="flex items-center space-x-2">
                             <Checkbox
                               id={`${resource}-${action}`}
-                              checked={(resourcePerms as any)[action] || false}
+                              checked={checked}
+                              onCheckedChange={(checked) =>
+                                updatePermission(resource, action, checked as boolean)
+                              }
+                            />
+                            <Label
+                              htmlFor={`${resource}-${action}`}
+                              className="text-sm font-normal cursor-pointer"
+                            >
+                              {actionLabels[action]}
+                            </Label>
+                          </div>
+                        );
+                      }
+                      // Handle nested permissions for pos
+                      if (isPos && action === "applyDiscount") {
+                        const checked = (resourcePerms as Record<string, boolean>)[action] || false;
+                        return (
+                          <div key={action} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`${resource}-${action}`}
+                              checked={checked}
                               onCheckedChange={(checked) =>
                                 updatePermission(resource, action, checked as boolean)
                               }

@@ -100,7 +100,7 @@ export default function SetupPage() {
       // Send email verification
       await sendEmailVerification(firebaseUser);
 
-      // Create user document in Firestore
+      // Create user document in Firestore with all employee data
       const userData = {
         uid: firebaseUser.uid,
         email: firebaseUser.email!,
@@ -109,14 +109,7 @@ export default function SetupPage() {
         role: "admin" as UserRole,
         permissions: adminPermissions,
         createdAt: serverTimestamp(),
-      };
-
-      await setDoc(doc(db, "users", firebaseUser.uid), userData);
-
-      // Create employee profile document
-      const employeeProfile = {
-        uid: firebaseUser.uid,
-        role: "admin" as UserRole,
+        // Employee-specific fields
         baseSalary: 0,
         joiningDate: serverTimestamp(),
         status: "ACTIVE" as const,
@@ -124,10 +117,9 @@ export default function SetupPage() {
           currentAdvance: 0,
           unpaidCommissions: 0,
         },
-        permissions: adminPermissions,
       };
 
-      await setDoc(doc(db, "employees", firebaseUser.uid), employeeProfile);
+      await setDoc(doc(db, "users", firebaseUser.uid), userData);
 
       // Show success message with instructions
       const message = `Admin account created successfully!\n\n` +

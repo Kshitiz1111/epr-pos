@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PermissionMatrix } from "@/components/admin/PermissionMatrix";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { User, EmployeeProfile, UserRole, EmployeePermissions } from "@/lib/types";
+import { User, UserRole, EmployeePermissions } from "@/lib/types";
 import { ArrowLeft, BarChart3, Edit, Save, X } from "lucide-react";
 import Link from "next/link";
 
@@ -20,7 +20,6 @@ export default function EmployeeDetailPage() {
   const params = useParams();
   const employeeId = params.id as string;
   const [employee, setEmployee] = useState<User | null>(null);
-  const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -33,25 +32,17 @@ export default function EmployeeDetailPage() {
 
   const fetchEmployeeData = async () => {
     try {
-      // Fetch user data
+      // Fetch user data (contains all employee information)
       const userDoc = await getDoc(doc(db, "users", employeeId));
-      let userData: User | null = null;
       if (userDoc.exists()) {
-        userData = { id: userDoc.id, ...userDoc.data() } as unknown as User;
+        const userData = { id: userDoc.id, ...userDoc.data() } as unknown as User;
         setEmployee(userData);
-      }
-
-      // Fetch employee profile
-      const employeeDoc = await getDoc(doc(db, "employees", employeeId));
-      if (employeeDoc.exists()) {
-        const profile = { id: employeeDoc.id, ...employeeDoc.data() } as unknown as EmployeeProfile;
-        setEmployeeProfile(profile);
         
-        // Use userData instead of employee state (which is async)
+        // Set form data from user document
         setFormData({
-          displayName: userData?.displayName || "",
-          role: userData?.role || "staff",
-          baseSalary: profile.baseSalary?.toString() || "0",
+          displayName: userData.displayName || "",
+          role: userData.role || "staff",
+          baseSalary: (userData.baseSalary || 0).toString(),
         });
         
         // Initialize permissions from userData or create default
@@ -70,7 +61,7 @@ export default function EmployeeDetailPage() {
             },
             employees: { view: false, create: false, update: false, delete: false },
             vendors: { view: false, create: false, update: false, delete: false },
-            pos: { view: false, create: false, update: false, delete: false },
+            pos: { view: false, create: false, update: false, delete: false, applyDiscount: false },
             reports: { view: false, create: false, update: false, delete: false },
             orders: { view: false, create: false, update: false, delete: false },
             settings: { view: false, create: false, update: false, delete: false },
@@ -78,7 +69,7 @@ export default function EmployeeDetailPage() {
           },
         };
         
-        if (userData?.permissions) {
+        if (userData.permissions) {
           // Merge existing permissions with defaults to ensure all resources are present
           const mergedPermissions: EmployeePermissions = {
             resources: {
@@ -88,6 +79,11 @@ export default function EmployeeDetailPage() {
               customers: {
                 ...defaultPermissions.resources.customers,
                 ...(userData.permissions.resources.customers || {}),
+              },
+              // Ensure pos resource has all fields including applyDiscount
+              pos: {
+                ...defaultPermissions.resources.pos,
+                ...(userData.permissions.resources.pos || {}),
               },
             },
           };
@@ -112,23 +108,21 @@ export default function EmployeeDetailPage() {
 
 
   const handleSave = async () => {
-    if (!employee || !employeeProfile || !permissions) return;
+    if (!employee || !permissions) return;
 
     setSaving(true);
     try {
-      // Update user document
+      // Update user document with all employee data
       await updateDoc(doc(db, "users", employeeId), {
         displayName: formData.displayName || undefined,
         role: formData.role,
         permissions,
-        updatedAt: serverTimestamp(),
-      });
-
-      // Update employee profile
-      await updateDoc(doc(db, "employees", employeeId), {
-        role: formData.role,
         baseSalary: parseFloat(formData.baseSalary) || 0,
-        permissions,
+        status: employee.status || "ACTIVE",
+        finance: employee.finance || {
+          currentAdvance: 0,
+          unpaidCommissions: 0,
+        },
         updatedAt: serverTimestamp(),
       });
 
@@ -281,16 +275,18 @@ export default function EmployeeDetailPage() {
               </CardContent>
             </Card>
 
-            {employeeProfile && (
+            {employee && (employee.baseSalary !== undefined || employee.status || employee.finance) && (
               <Card>
                 <CardHeader>
                   <CardTitle>Employee Profile</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Status</p>
-                    <p className="font-medium capitalize">{employeeProfile.status}</p>
-                  </div>
+                  {employee.status && (
+                    <div>
+                      <p className="text-sm text-gray-600">Status</p>
+                      <p className="font-medium capitalize">{employee.status}</p>
+                    </div>
+                  )}
                   {editing ? (
                     <div className="space-y-2">
                       <Label htmlFor="baseSalary">Base Salary (Rs)</Label>
@@ -306,25 +302,29 @@ export default function EmployeeDetailPage() {
                   ) : (
                     <div>
                       <p className="text-sm text-gray-600">Base Salary</p>
-                      <p className="font-medium">Rs {employeeProfile.baseSalary.toFixed(2)}</p>
+                      <p className="font-medium">Rs {(employee.baseSalary || 0).toFixed(2)}</p>
                     </div>
                   )}
-                  {employeeProfile.joiningDate && (
+                  {employee.joiningDate && (
                     <div>
                       <p className="text-sm text-gray-600">Joining Date</p>
                       <p className="font-medium">
-                        {employeeProfile.joiningDate.toDate().toLocaleDateString()}
+                        {employee.joiningDate.toDate().toLocaleDateString()}
                       </p>
                     </div>
                   )}
-                  <div>
-                    <p className="text-sm text-gray-600">Current Advance</p>
-                    <p className="font-medium">Rs {employeeProfile.finance.currentAdvance.toFixed(2)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Unpaid Commissions</p>
-                    <p className="font-medium">Rs {employeeProfile.finance.unpaidCommissions.toFixed(2)}</p>
-                  </div>
+                  {employee.finance && (
+                    <>
+                      <div>
+                        <p className="text-sm text-gray-600">Current Advance</p>
+                        <p className="font-medium">Rs {(employee.finance.currentAdvance || 0).toFixed(2)}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Unpaid Commissions</p>
+                        <p className="font-medium">Rs {(employee.finance.unpaidCommissions || 0).toFixed(2)}</p>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             )}

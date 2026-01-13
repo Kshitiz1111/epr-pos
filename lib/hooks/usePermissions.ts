@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { EmployeePermissions } from "@/lib/types";
 
 type ResourceName = keyof EmployeePermissions["resources"];
-type PermissionAction = "view" | "create" | "update" | "delete" | "viewCredits" | "settleCredits";
+type PermissionAction = "view" | "create" | "update" | "delete" | "viewCredits" | "settleCredits" | "applyDiscount";
 
 export function usePermissions() {
   const { user } = useAuth();
@@ -26,6 +26,13 @@ export function usePermissions() {
       // Handle special permissions for customers resource
       if (resource === "customers") {
         if (action === "viewCredits" || action === "settleCredits") {
+          return (resourcePerms as any)[action] === true;
+        }
+      }
+
+      // Handle special permissions for pos resource
+      if (resource === "pos") {
+        if (action === "applyDiscount") {
           return (resourcePerms as any)[action] === true;
         }
       }
